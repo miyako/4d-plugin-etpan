@@ -98,7 +98,7 @@ authentication|TEXT|``LOGIN``, ``PLAIN``, ``CRAM-MD5``, ``DIGEST-MD5``, ``NTLM``
 1. オーバーラインをチルダに変換しない
 1. 円記号をバックスラッシュに変換しない
 1. 半角カタカナを全角カタカナに変換しない
-1. Windowsの機種依存文字（JIS X 0213）をサポート
+1. Windowsの機種依存文字をサポート
 
 78行でソフト改行が挿入されることを回避するためには，``format=flowed; delsp=yes;``が必要です。
 
@@ -108,5 +108,6 @@ authentication|TEXT|``LOGIN``, ``PLAIN``, ``CRAM-MD5``, ``DIGEST-MD5``, ``NTLM``
 
 * 4D Internet Commandsよりも優れている点
 
-1. Windowsの機種依存文字（JIS X 0213）をサポート
 1. 変換できない文字でストップしない（lossy変換）
+1. Windowsの機種依存文字（JIS X 0213）をサポート
+
