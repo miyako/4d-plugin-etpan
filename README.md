@@ -26,7 +26,7 @@ result|TEXT|Results in JSON (in)
 
 ## Example of sending email in ISO-2022-JP
 
-``
+```
 C_OBJECT($m;$o)
 ARRAY OBJECT($mm;0)
 
@@ -80,7 +80,7 @@ $result:=etpan smtp send ($params;$messages)
 
 ARRAY OBJECT($results;0)
 JSON PARSE ARRAY($result;$results)
-``
+```
 
 ## Params
 
