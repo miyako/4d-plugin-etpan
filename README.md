@@ -90,3 +90,14 @@ authentication|TEXT|``LOGIN``, ``PLAIN``, ``CRAM-MD5``, ``DIGEST-MD5``, ``NTLM``
 
 
 ``AUTO`` authentication means ``DIGEST-MD5`` > ``CRAM-MD5`` > ``LOGIN`` > ``PLAIN`` (not recommneded, slow because of multiple retries).
+
+### ISO-2022-JPについて
+
+1. オーバーラインをチルダに変換しない
+1. 円記号をバックスラッシュに変換しない
+1. 半角カタカナを全角カタカナに変換しない
+1. Windowsの機種依存文字（デファクトスタンダート）をサポート
+
+78行でソフト改行が挿入されることを回避するためには，``format=flowed; delsp=yes;``が必要です。
+
+1~3は，Windowsのメールサーバーを経由すると変換されるかもしれません。
