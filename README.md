@@ -100,14 +100,22 @@ authentication|TEXT|``LOGIN``, ``PLAIN``, ``CRAM-MD5``, ``DIGEST-MD5``, ``NTLM``
 1. 半角カタカナを全角カタカナに変換しない
 1. Windowsの機種依存文字をサポート
 
-78行でソフト改行が挿入されることを回避するためには，``format=flowed; delsp=yes;``が必要です。
+* 78行でソフト改行が挿入されることを回避するためには，``format=flowed; delsp=yes;``が必要です。
 
-1~3は，Windowsのメールサーバーを経由すると変換されるかもしれません。
+* 1~3は，機種依存，かつメールサーバー依存です。
+
+* Microsoftのメールサーバーを経由した場合，Shift_JISと同じように変換（チルダ・バックスラッシュ・全角カタカナ）されるかもしれません。
 
 ### Shift_JISについて
 
 * 4D Internet Commandsよりも優れている点
 
 1. 変換できない文字でストップしない（lossy変換）
-1. Windowsの機種依存文字（JIS X 0213）をサポート
+1. Windowsの機種依存文字をサポート
+1. JIS X 0213拡張文字をサポート
+1. Shift_JISとWindows-31Jを区別する
+
+* 文字コード``windows-31j``, ``windows_31j``, ``cp932``を指定した場合，Microsoft仕様のShift_JIS（X 0213含む）が使用されます。「はしごたか」は0xEEE0（NECコード）に変換され，はしごだかとして表示されます。（メールクライアント依存）
+
+* 文字コード``shift-jis``, ``shift_jis``を指定した場合，標準仕様のShift_JIS（X 0213含む）が使用されます。「はしごたか」は標準の「高」に変換されます。（メールクライアント非依存）
 
