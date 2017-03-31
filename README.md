@@ -122,4 +122,5 @@ authentication|TEXT|``LOGIN``, ``PLAIN``, ``CRAM-MD5``, ``DIGEST-MD5``, ``NTLM``
 * 文字数
 
 ``Shift_JIS`` / ``Windows-31J``: ``14605``文字（``11233`` + 機種依存）
+
 ``ISO-2022-JP``: ``7518``文字（``6879`` + 機種依存）
