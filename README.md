@@ -5,7 +5,7 @@ Email client based on the [EtPan](http://www.etpan.org/libetpan.html) library
 
 | carbon | cocoa | win32 | win64 |
 |:------:|:-----:|:---------:|:---------:|
-|<img src="https://cloud.githubusercontent.com/assets/1725068/22371562/1b091f0a-e4db-11e6-8458-8653954a7cce.png" width="24" height="24" />|<img src="https://cloud.githubusercontent.com/assets/1725068/22371562/1b091f0a-e4db-11e6-8458-8653954a7cce.png" width="24" height="24" />|||
+|<img src="https://cloud.githubusercontent.com/assets/1725068/22371562/1b091f0a-e4db-11e6-8458-8653954a7cce.png" width="24" height="24" />|<img src="https://cloud.githubusercontent.com/assets/1725068/22371562/1b091f0a-e4db-11e6-8458-8653954a7cce.png" width="24" height="24" />|<img src="https://cloud.githubusercontent.com/assets/1725068/22371562/1b091f0a-e4db-11e6-8458-8653954a7cce.png" width="24" height="24" />|<img src="https://cloud.githubusercontent.com/assets/1725068/22371562/1b091f0a-e4db-11e6-8458-8653954a7cce.png" width="24" height="24" />|
 
 ### Version
 
@@ -41,7 +41,9 @@ accessToken|TEXT|OAuth (experimental)
 authentication|TEXT|OAuth (experimental)
 context|TEXT|Passed as ``$4`` to the callback method. Should be JSON
 
-``AUTO`` authentication means ``DIGEST-MD5`` > ``CRAM-MD5`` > ``LOGIN`` > ``PLAIN`` (not recommneded, slow because of multiple retries). Other possible values (experimental) are ``GMAIL`` and ``OUTLOOK``
+``AUTO`` authentication means ``DIGEST-MD5`` > ``CRAM-MD5`` > ``LOGIN`` > ``PLAIN`` (not recommneded, slow because of multiple retries). Other possible values (experimental) are ``GMAIL`` and ``OUTLOOK``.
+
+**Note**: ``NTLM`` seems to fail on Windows.
 
 ## Message
 
@@ -86,7 +88,7 @@ OB SET($o;\
 "allowInsecure";False;\
 "host";"exchange.4d.com";\
 "sender";"株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>";\
-"authentication";"NTLM";\
+"authentication";"LOGIN";\
 "timeout";0)
 
 //messages
@@ -197,7 +199,7 @@ OB SET($o;\
 "allowInsecure";False;\
 "host";"exchange.4d.com";\
 "sender";"株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>";\
-"authentication";"NTLM";\
+"authentication";"LOGIN";\
 "timeout";0)
 
 //messages
