@@ -42,7 +42,7 @@ authentication|TEXT|OAuth (experimental)
 
 ``AUTO`` authentication means ``DIGEST-MD5`` > ``CRAM-MD5`` > ``LOGIN`` > ``PLAIN`` (not recommneded, slow because of multiple retries). Other possible values (experimental) are ``GMAIL`` and ``OUTLOOK``
 
-##Message
+## Message
 
 Atrribute|Type|Description
 ------------|------------|----
@@ -50,11 +50,13 @@ contentType|TEXT|Default = ``text/plain``
 charset|TEXT|Default = ``utf-8`` currently supports ``shift_jis``, ``iso-2022-jp``, ``windows-31j``
 subject|TEXT|
 body|TEXT|
-from|ARRAY TEXT|
-to|ARRAY TEXT|
-cc|ARRAY TEXT|
-bcc|ARRAY TEXT|
-replyTo|ARRAY TEXT|
+from|ARRAY TEXT|``NAME <name@domain.com>``
+to|ARRAY TEXT|``NAME <name@domain.com>``
+cc|ARRAY TEXT|``NAME <name@domain.com>``
+bcc|ARRAY TEXT|``NAME <name@domain.com>``
+replyTo|ARRAY TEXT|``NAME <name@domain.com>``
+
+``Content-Transfer-Encoding`` is managed automatically.
 
 ### 各エンコーディングで同一のメールを送信する例
 ```
@@ -131,6 +133,7 @@ $info:=JSON Parse($result)
 1. 円記号をバックスラッシュに変換しない
 1. 半角カタカナを全角カタカナに変換しない
 1. Windowsの機種依存文字をサポート
+1. 長い宛先・件名のサポート
 
 * 78行でソフト改行が挿入されることを回避するためには，``format=flowed; delsp=yes;``が必要です。
 
@@ -146,10 +149,13 @@ $info:=JSON Parse($result)
 1. Windowsの機種依存文字をサポート
 1. JIS X 0213拡張文字をサポート
 1. Shift_JISとWindows-31Jを区別する
+1. 長い宛先・件名のサポート
 
 * 文字コード``windows-31j``, ``windows_31j``, ``cp932``を指定した場合，Microsoft仕様のShift_JIS（X 0213含む）が使用されます。「はしごたか」は0xEEE0（NECコード）に変換され，はしごだかとして表示されます。（メールクライアント依存）
 
 * 文字コード``shift-jis``, ``shift_jis``を指定した場合，標準仕様のShift_JIS（X 0213含む）が使用されます。「はしごたか」は標準の「高」に変換されます。（メールクライアント非依存）
+
+### メモ
 
 * 文字数
 
