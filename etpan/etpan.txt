@@ -1,0 +1,17 @@
+./autogen.sh
+
+export CCFLAGS="-arch x86_64"
+export CXXFLAGS="-arch x86_64"
+export CFLAGS="-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk -mmacosx-version-min=10.8"
+export LDFLAGS="-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk -mmacosx-version-min=10.8 -L/usr/local/lib"
+export CPPFLAGS="-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk -mmacosx-version-min=10.8 -I/usr/local/include"
+
+./configure --prefix=/Users/miyako/Desktop/64
+
+export CCFLAGS="-arch i386"
+export CXXFLAGS="-arch i386"
+export CFLAGS="-arch i386 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.7.sdk -mmacosx-version-min=10.7"
+export LDFLAGS="-arch i386 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.7.sdk -mmacosx-version-min=10.7 -L/usr/local/lib"
+export CPPFLAGS="-arch i386 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.7.sdk -mmacosx-version-min=10.7 -I/usr/local/include"
+
+./configure --prefix=/Users/miyako/Desktop/32
