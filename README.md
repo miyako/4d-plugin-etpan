@@ -22,7 +22,7 @@ Parameter|Type|Description
 params|TEXT|Connection paramters in JSON (in)
 messages|TEXT|Messages in JSON (in)
 callback|TEXT|Callback method name (in)
-result|TEXT|Results in JSON (in)
+result|TEXT|Results in JSON
 
 ## Params
 
