@@ -24,6 +24,38 @@ messages|TEXT|Messages in JSON (in)
 callback|TEXT|Callback method name (in)
 result|TEXT|Results in JSON (in)
 
+## Params
+
+Atrribute|Type|Description
+------------|------------|----
+authentication|TEXT|``LOGIN``, ``PLAIN``, ``CRAM-MD5``, ``DIGEST-MD5``, ``NTLM``, ``SRP``, ``GSSAPI``, ``KERBEROS_V4``, ``AUTO``
+user|TEXT|
+pass|TEXT|
+port|LONGINT|Default = ``25``
+tls|BOOLEAN|Default = ``true``
+allowInsecure|BOOLEAN|Default = ``false``
+timeout|LONGINT|Default = ``0`` (no timeout)
+host|TEXT|Default = ``localhost``
+sender|TEXT|
+accessToken|TEXT|OAuth (experimental)
+authentication|TEXT|OAuth (experimental)
+
+``AUTO`` authentication means ``DIGEST-MD5`` > ``CRAM-MD5`` > ``LOGIN`` > ``PLAIN`` (not recommneded, slow because of multiple retries). Other possible values (experimental) are ``GMAIL`` and ``OUTLOOK``
+
+##Message
+
+Atrribute|Type|Description
+------------|------------|----
+contentType|TEXT|Default = ``text/plain``
+charset|TEXT|Default = ``utf-8`` currently supports ``shift_jis``, ``iso-2022-jp``, ``windows-31j``
+subject|TEXT|
+body|TEXT|
+from|ARRAY TEXT|
+to|ARRAY TEXT|
+cc|ARRAY TEXT|
+bcc|ARRAY TEXT|
+replyTo|ARRAY TEXT|
+
 ### 各エンコーディングで同一のメールを送信する例
 ```
 C_OBJECT($m;$o)
@@ -91,16 +123,6 @@ $result:=etpan smtp send ($params;$messages)
 $info:=JSON Parse($result)
 
 ```
-
-## Params
-
-Atrribute|Type|Description
-------------|------------|----
-authentication|TEXT|``LOGIN``, ``PLAIN``, ``CRAM-MD5``, ``DIGEST-MD5``, ``NTLM``, ``SRP``, ``GSSAPI``, ``KERBEROS_V4``, ``AUTO``
-
-
-``AUTO`` authentication means ``DIGEST-MD5`` > ``CRAM-MD5`` > ``LOGIN`` > ``PLAIN`` (not recommneded, slow because of multiple retries).
-
 ### ISO-2022-JPについて
 
 * 4D Internet Commandsよりも優れている点
