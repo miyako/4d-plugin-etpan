@@ -39,6 +39,7 @@ host|TEXT|Default = ``localhost``
 sender|TEXT|
 accessToken|TEXT|OAuth (experimental)
 authentication|TEXT|OAuth (experimental)
+context|TEXT|Passed as ``$4`` to the callback method. Should be JSON
 
 ``AUTO`` authentication means ``DIGEST-MD5`` > ``CRAM-MD5`` > ``LOGIN`` > ``PLAIN`` (not recommneded, slow because of multiple retries). Other possible values (experimental) are ``GMAIL`` and ``OUTLOOK``
 
@@ -56,7 +57,20 @@ cc|ARRAY TEXT|``NAME <name@domain.com>``
 bcc|ARRAY TEXT|``NAME <name@domain.com>``
 replyTo|ARRAY TEXT|``NAME <name@domain.com>``
 
-``Content-Transfer-Encoding`` is managed automatically.
+* ``Content-Transfer-Encoding`` is managed automatically.
+
+## Callback Method
+
+```
+MyMethod (index;total;log;context)
+```
+
+Atrribute|Type|Description
+------------|------------|----
+index|LONGINT|
+total|LONGINT|
+log|TEXT|
+context|TEXT|
 
 ### 各エンコーディングで同一のメールを送信する例
 ```
