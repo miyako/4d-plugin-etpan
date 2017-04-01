@@ -42,7 +42,20 @@
 //some external libraries assume first load; include this file after them 
 #if VERSIONWIN
 #ifndef _WINDOWS_
+//need to load winsock2 before windows
+//BSD wrappers
+//#define TickCount GetTickCount
+//#define getpid GetCurrentProcessId
+#include <winsock2.h>
+//#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
 #include <windows.h>
+//#include <iphlpapi.h>
+//#include <icmpapi.h>
+//#pragma comment(lib, "iphlpapi.lib")
+//#include <time.h>
+//#include <mmsystem.h>
+//#pragma comment(lib, "winmm.lib")
 #endif
 #endif
 

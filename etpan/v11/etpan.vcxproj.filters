@@ -52,6 +52,12 @@
     <ClCompile Include="..\4D Plugin API\Classes\C_TEXT.cpp">
       <Filter>Source\4D Plugin API\Classes\C</Filter>
     </ClCompile>
+    <ClCompile Include="..\cJSON\cJSON.c" />
+    <ClCompile Include="..\JIS\charset.c" />
+    <ClCompile Include="..\JIS\iso2022jp.c" />
+    <ClCompile Include="..\JIS\shiftjis.c" />
+    <ClCompile Include="..\JIS\utf8.c" />
+    <ClCompile Include="..\JIS\windows31j.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\4DPlugin.h">
@@ -117,6 +123,12 @@
     <ClInclude Include="..\4D Plugin API\Classes\C_REAL.h">
       <Filter>Source\4D Plugin API\Classes\C</Filter>
     </ClInclude>
+    <ClInclude Include="..\cJSON\cJSON.h" />
+    <ClInclude Include="..\JIS\charset.h" />
+    <ClInclude Include="..\JIS\iso2022jp.h" />
+    <ClInclude Include="..\JIS\shiftjis.h" />
+    <ClInclude Include="..\JIS\utf8.h" />
+    <ClInclude Include="..\JIS\windows31j.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Source">

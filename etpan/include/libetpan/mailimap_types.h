@@ -3339,6 +3339,13 @@ enum {
     for the last command
 */
 
+#pragma once
+
+#define false   0
+#define true    1
+
+#define bool int
+
 typedef void mailimap_msg_att_handler(struct mailimap_msg_att * msg_att, void * context);
 
 typedef bool mailimap_msg_body_handler(int msg_att_type, struct mailimap_msg_att_body_section * section,
