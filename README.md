@@ -24,12 +24,12 @@ messages|TEXT|Messages in JSON (in)
 callback|TEXT|Callback method name (in)
 result|TEXT|Results in JSON (in)
 
-## Example of sending email in ISO-2022-JP
-
+### 各エンコーディングで同一のメールを送信する例
 ```
 C_OBJECT($m;$o)
 ARRAY OBJECT($mm;0)
 
+//params
 OB SET($o;\
 "user";"keisuke.miyako";\
 "pass";"**********";\
@@ -41,16 +41,14 @@ OB SET($o;\
 "authentication";"NTLM";\
 "timeout";0)
 
+//messages
+OB SET($m;"contentType";"text/plain";"charset";"utf-8")
 OB SET($m;\
-"contentType";"text/plain; format=flowed; delsp=yes; ";\
-"charset";"iso-2022-jp")
-
-OB SET($m;\
-"subject";"日本語ですよ";\
-"body";(Char(0x203E)+Char(0x00A5)+"日本語ですよｶｷｸｹｺ")*100)
+"subject";("日本語ですよ")*10;\
+"body";(Char(0x203E)+Char(0x00A5)+"日本語ですよｶｷｸｹｺ髙橋")*100)
 
 ARRAY TEXT($from;1)
-$from{1}:="株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>"
+$from{1}:=("日本語ですよ"*10)+" <keisuke.miyako@4d.com>"
 OB SET ARRAY($m;"from";$from)
 
 ARRAY TEXT($to;1)
@@ -69,17 +67,29 @@ ARRAY TEXT($replyTo;1)
 $replyTo{1}:="株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>"
 OB SET ARRAY($m;"replyTo";$replyTo)
 
+//utf-8
 APPEND TO ARRAY($mm;OB Copy($m))
-  //APPEND TO ARRAY($mm;OB Copy($m))
-  //APPEND TO ARRAY($mm;OB Copy($m))
+
+//shift_jis
+OB SET($m;"contentType";"text/plain";"charset";"shift_jis")
+APPEND TO ARRAY($mm;OB Copy($m))
+
+//iso-2022-jp
+OB SET($m;"contentType";"text/plain; format=flowed; delsp=yes; ";"charset";"iso-2022-jp")
+APPEND TO ARRAY($mm;OB Copy($m))
+
+//windos-31j
+OB SET($m;"contentType";"text/plain";"charset";"windows-31j")
+APPEND TO ARRAY($mm;OB Copy($m))
+
 
 $params:=JSON Stringify($o)
 $messages:=JSON Stringify array($mm)
 
 $result:=etpan smtp send ($params;$messages)
 
-ARRAY OBJECT($results;0)
-JSON PARSE ARRAY($result;$results)
+$info:=JSON Parse($result)
+
 ```
 
 ## Params
