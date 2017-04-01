@@ -130,7 +130,6 @@ APPEND TO ARRAY($mm;OB Copy($m))
 OB SET($m;"contentType";"text/plain";"charset";"windows-31j")
 APPEND TO ARRAY($mm;OB Copy($m))
 
-
 $params:=JSON Stringify($o)
 $messages:=JSON Stringify array($mm)
 
@@ -182,3 +181,72 @@ $info:=JSON Parse($result)
 ISO-2022-JPが指定された場合，件名は``Quoted-Printable``でエンコードしますが，宛先は``Base64``でエンコードします。これは，``Quoted-Printable``を使用した場合，``""name"" <name@domain.com>``のように表示名にダブルクオートがライブラリによって付けられ，ヘッダーが折り返された場合，開いたままとなってしまうことを回避するためです。
 
 ISO-2022-JP, Shift_JIS, UTF-8ともに，折り返しが文字の途中で発生しないように配慮しています。また，ISO-2022-JPは折り返しの手前でステートをASCIIに戻しています。いずれも，長いヘッダーで文字化けが発生しないようにするためです。
+
+### Example with Callback
+
+```
+C_OBJECT($m;$o)
+ARRAY OBJECT($mm;0)
+
+//params
+OB SET($o;\
+"user";"keisuke.miyako";\
+"pass";"**********";\
+"port";587;\
+"tls";True;\
+"allowInsecure";False;\
+"host";"exchange.4d.com";\
+"sender";"株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>";\
+"authentication";"NTLM";\
+"timeout";0)
+
+//messages
+OB SET($m;"contentType";"text/plain";"charset";"utf-8")
+OB SET($m;\
+"subject";("日本語ですよ")*10;\
+"body";(Char(0x203E)+Char(0x00A5)+"日本語ですよｶｷｸｹｺ髙橋")*100)
+
+ARRAY TEXT($from;1)
+$from{1}:=("日本語ですよ"*10)+" <keisuke.miyako@4d.com>"
+OB SET ARRAY($m;"from";$from)
+
+ARRAY TEXT($to;1)
+$to{1}:="株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>"
+OB SET ARRAY($m;"to";$to)
+
+ARRAY TEXT($cc;1)
+$cc{1}:="株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>"
+OB SET ARRAY($m;"cc";$cc)
+
+ARRAY TEXT($bcc;1)
+$bcc{1}:="株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>"
+OB SET ARRAY($m;"bcc";$bcc)
+
+ARRAY TEXT($replyTo;1)
+$replyTo{1}:="株式会社フォーディー・ジャパン <keisuke.miyako@4d.com>"
+OB SET ARRAY($m;"replyTo";$replyTo)
+
+//utf-8
+APPEND TO ARRAY($mm;OB Copy($m))
+
+$p:=Progress New 
+Progress SET PROGRESS ($p;-1)
+
+$w:=Open form window("Form1")
+
+C_OBJECT($context)
+OB SET($context;\
+"progress";$p;\
+"window";$w)
+
+OB SET($o;"context";$context)
+
+$params:=JSON Stringify($o)
+$messages:=JSON Stringify array($mm)
+
+$result:=etpan smtp send ($params;$messages;"MyCallback")
+
+$info:=JSON Parse($result)
+
+Progress QUIT ($p)
+```
