@@ -230,7 +230,7 @@ OB SET ARRAY($m;"replyTo";$replyTo)
 APPEND TO ARRAY($mm;OB Copy($m))
 
 $p:=Progress New 
-Progress SET PROGRESS ($p;-1)
+Progress SET PROGRESS ($p;0)
 
 $w:=Open form window("Form1")
 
