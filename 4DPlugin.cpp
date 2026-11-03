@@ -37,7 +37,17 @@ void CommandDispatcher (PA_long32 pProcNum, sLONG_PTR *pResult, PackagePtr pPara
 			// --- SMTP
 			
 		case 1 :
-			etpan_smtp_send(pResult, pParams);
+			//the command returns text: an exception swallowed by PluginMain
+			//before the return value is set would leave 4D waiting for it
+			try
+			{
+				etpan_smtp_send(pResult, pParams);
+			}
+			catch(...)
+			{
+				C_TEXT returnValue;
+				returnValue.setReturn(pResult);
+			}
 			break;
 			
 	}
@@ -243,7 +253,7 @@ int parse_address(
 	int res = MAILIMF_NO_ERROR;
 	
 	size_t index = 0;
-	mailimf_address *addr;
+	mailimf_address *addr = NULL;
 	if((res = mailimf_address_parse((const char *)string.c_str(),
 																	string.length(),
 																	&index,
@@ -258,6 +268,8 @@ int parse_address(
 			//MAILIMF_ADDRESS_GROUP is not supported for now
 			res = MAILIMF_ERROR_PARSE;
 		}
+		//the strings were copied above; the parsed address is ours to free
+		mailimf_address_free(addr);
 	}
 	return res;
 }
@@ -373,7 +385,10 @@ typedef struct
 void mail_logger(mailsmtp *session, int log_type, const char *str, size_t size, void *context)
 {
 	smtp_ctx *ctx = (smtp_ctx *)context;
-	
+
+	//called from libetpan (C code): no C++ exception may unwind through it
+	try
+	{
 	if((ctx->method_size) && (!PA_IsProcessDying()))
 	{
 		switch (log_type)
@@ -390,13 +405,13 @@ void mail_logger(mailsmtp *session, int log_type, const char *str, size_t size, 
 					PA_SetLongintVariable(&params[0], ctx->index);
 					PA_SetLongintVariable(&params[1], ctx->total);
 					
-					params[2] = PA_CreateVariable(eVK_Unistring);
+					params[2] = PA_CreateVariable(eVK_Undefined);//typed by PA_SetStringVariable (eVK_Unistring would leak an empty string)
 					C_TEXT smtp;
 					smtp.setUTF8String((const uint8_t *)str, size);
 					PA_Unistring smtp_log = PA_CreateUnistring((PA_Unichar *)smtp.getUTF16StringPtr());
 					PA_SetStringVariable(&params[2], &smtp_log);
 					
-					params[3] = PA_CreateVariable(eVK_Unistring);
+					params[3] = PA_CreateVariable(eVK_Undefined);//typed by PA_SetStringVariable (eVK_Unistring would leak an empty string)
 					PA_Unistring json = PA_CreateUnistring((PA_Unichar *)ctx->context);
 					PA_SetStringVariable(&params[3], &json);
 					
@@ -416,17 +431,17 @@ void mail_logger(mailsmtp *session, int log_type, const char *str, size_t size, 
 					PA_SetLongintVariable(&params[2], ctx->index);
 					PA_SetLongintVariable(&params[3], ctx->total);
 					
-					params[0] = PA_CreateVariable(eVK_Unistring);
+					params[0] = PA_CreateVariable(eVK_Undefined);//typed by PA_SetStringVariable (eVK_Unistring would leak an empty string)
 					PA_Unistring method = PA_CreateUnistring((PA_Unichar *)ctx->method);
 					PA_SetStringVariable(&params[0], &method);
 
-					params[4] = PA_CreateVariable(eVK_Unistring);
+					params[4] = PA_CreateVariable(eVK_Undefined);//typed by PA_SetStringVariable (eVK_Unistring would leak an empty string)
 					C_TEXT smtp;
 					smtp.setUTF8String((const uint8_t *)str, size);
 					PA_Unistring smtp_log = PA_CreateUnistring((PA_Unichar *)smtp.getUTF16StringPtr());
 					PA_SetStringVariable(&params[4], &smtp_log);
 					
-					params[5] = PA_CreateVariable(eVK_Unistring);
+					params[5] = PA_CreateVariable(eVK_Undefined);//typed by PA_SetStringVariable (eVK_Unistring would leak an empty string)
 					PA_Unistring json = PA_CreateUnistring((PA_Unichar *)ctx->context);
 					PA_SetStringVariable(&params[5], &json);
 					
@@ -442,6 +457,11 @@ void mail_logger(mailsmtp *session, int log_type, const char *str, size_t size, 
 			}
 				break;
 		}
+	}
+	}
+	catch(...)
+	{
+
 	}
 	PA_YieldAbsolute();
 }
@@ -491,7 +511,12 @@ void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 				cJSON *context = cJSON_GetObjectItem(params, "context");
 				if(cJSON_IsObject(context))
 				{
-					contextInfo = CUTF8String((const uint8_t *)cJSON_PrintUnformatted(context));
+					char *context_str = cJSON_PrintUnformatted(context);
+					if(context_str)
+					{
+						contextInfo = CUTF8String((const uint8_t *)context_str);
+						free(context_str);//cJSON_Print* returns a malloc'd copy
+					}
 				}
 				ctx.context_size = contextInfo.length();
 				C_TEXT contextJson;
@@ -681,7 +706,8 @@ void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 							
 							cJSON *messageInfoItem = cJSON_CreateObject();
 							cJSON *messageInfoLogs = cJSON_CreateArray();
-							
+							bool messageInfoAttached = false;
+
 							//MAIL FROM
 							if ((ret = (esmtp
 													?
@@ -889,9 +915,18 @@ void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 									cJSON_AddBoolToObject(messageInfoItem, "success", ret == MAILSMTP_NO_ERROR);
 									cJSON_AddItemToObject(messageInfoItem, "details", messageInfoLogs);
 									cJSON_AddItemToArray(messageInfo, messageInfoItem);
-									
+									messageInfoAttached = true;
+
 									mailsmtp_reset(smtp);
 								}
+							}
+
+							if(!messageInfoAttached)
+							{
+								//MAIL FROM failed or the message was not an object:
+								//the item was never added to the result, so it is still ours
+								cJSON_Delete(messageInfoLogs);
+								cJSON_Delete(messageInfoItem);
 							}
 						}
 					}
@@ -907,7 +942,12 @@ void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 	cJSON_AddItemToObject(result, "session", sessionInfo);
 	
 	CUTF8String json;
-	json = CUTF8String((const uint8_t *)cJSON_PrintUnformatted(result));
+	char *result_str = cJSON_PrintUnformatted(result);
+	if(result_str)
+	{
+		json = CUTF8String((const uint8_t *)result_str);
+		free(result_str);//cJSON_Print* returns a malloc'd copy
+	}
 	returnValue.setUTF8String(&json);
 
 	cJSON_Delete(result);
@@ -1033,6 +1073,13 @@ void mime_create_main_content
 																												NULL /* references */,
 																												subject)))
 								 {
+									 //fields owns the lists passed above; the empty ones passed as NULL are still ours
+									 if(!from_name.size()) mailimf_mailbox_list_free(from);
+									 if(!reply_to_name.size()) mailimf_address_list_free(reply_to);
+									 if(!to_name.size()) mailimf_address_list_free(to);
+									 if(!cc_name.size()) mailimf_address_list_free(cc);
+									 if(!bcc_name.size()) mailimf_address_list_free(bcc);
+
 									 if((mime = mailmime_new_message_data(NULL)))
 									 {
 										 mailmime_set_imf_fields(mime, fields);
