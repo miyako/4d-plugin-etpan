@@ -1,0 +1,7 @@
+.DS_Store
+build/
+*.4dbase/Logs/
+*.4dbase/userPreferences.*/
+# built by Xcode / the release workflow; the runtime dylibs next to it stay tracked
+etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS/etpan
+etpan.4dbase/Plugins/etpan.bundle/Contents/_CodeSignature/
