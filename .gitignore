@@ -2,6 +2,13 @@
 build/
 *.4dbase/Logs/
 *.4dbase/userPreferences.*/
-# built by Xcode / the release workflow; the runtime dylibs next to it stay tracked
+# built by Xcode / the release workflow
 etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS/etpan
 etpan.4dbase/Plugins/etpan.bundle/Contents/_CodeSignature/
+
+# built by scripts/build-macos-deps.sh and scripts/build-windows-deps.ps1
+a/
+lib/windows64/
+include/mac/
+include/windows/
+build-deps.log

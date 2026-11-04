@@ -19,7 +19,6 @@ void convert_to_utf8_header(const char *header_name,
 	size_t STRING_FLOW_LENGTH = 1;
 	
 	int len = src.size();
-	int before_last = len > 0 ? len-1 : 0;
 	
 	int pos = name.length() + 2;// ": "
 	int max_line_length = UTF8_MAX_LINE_LENGTH - 5 - encoding_name.length() - pos;// =??B?, ?=
@@ -33,6 +32,9 @@ void convert_to_utf8_header(const char *header_name,
 	std::vector<uint8_t> buf(UTF8_MAX_LINE_LENGTH);
 	int buf_pos = 0;
 	
+	//each encoded word must hold whole characters (RFC 2047 5.3):
+	//collect one complete UTF-8 sequence at a time, and flush the buffer
+	//before a character that would make the encoded word too long
 	for(int i = 0; i < len; ++i)
 	{
 		if((i % UTF8_YIELD_SIZE)==0)
@@ -40,48 +42,47 @@ void convert_to_utf8_header(const char *header_name,
 			PA_YieldAbsolute();
 		}
 		
-		//UTF-8
 		uint8_t code = src.at(i);
 		
-		if((code & 0xFC) && (i < (len-5)))// 6
+		int seq_len;
+		if(code < 0x80)
 		{
-			buf[buf_pos++] = code;
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-		}else if((code & 0xF8) && (i < (len-4)))// 5
+			seq_len = 1;
+		}else if((code & 0xE0) == 0xC0)
 		{
-			buffer += code;
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-		}else if((code & 0xF0) && (i < (len-3)))// 4
+			seq_len = 2;
+		}else if((code & 0xF0) == 0xE0)
 		{
-			buffer += code;
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-		}else if((code & 0xE0) && (i < (len-2)))// 3
+			seq_len = 3;
+		}else if((code & 0xF8) == 0xF0)
 		{
-			buf[buf_pos++] = code;
-			buf[buf_pos++] = src.at(++i);
-			buf[buf_pos++] = src.at(++i);
-		}else if((code & 0xC0) && (i < (len-1)))// 2
-		{
-			buf[buf_pos++] = code;
-			buf[buf_pos++] = src.at(++i);
-		}else if(code <= 0x7F)// 1
-		{
-			buf[buf_pos++] = code;
+			seq_len = 4;
 		}else
 		{
-			continue;
+			continue;//stray continuation byte or invalid lead byte
 		}
-
-		if(((buf_pos / 3) * 4) >= max_line_length)
+		
+		if((i + seq_len) > len)
+		{
+			break;//truncated sequence at the end
+		}
+		
+		bool valid = true;
+		for(int k = 1; k < seq_len; ++k)
+		{
+			if((src.at(i + k) & 0xC0) != 0x80)
+			{
+				valid = false;
+				break;
+			}
+		}
+		if(!valid)
+		{
+			continue;//drop the lead byte, resync on the next one
+		}
+		
+		//base64 length of the buffer with this character added
+		if((buf_pos) && ((((buf_pos + seq_len + 2) / 3) * 4) > max_line_length))
 		{
 			buffer = CUTF8String(&buf[0], buf_pos);
 			int buf_len = 0;
@@ -113,16 +114,12 @@ void convert_to_utf8_header(const char *header_name,
 			
 			switch(buf_len % 4)
 			{
-				case 1:
-					dst += CUTF8String((const uint8_t *)"===");// 3
-					pos += 3;
-					break;
 				case 2:
-					dst += CUTF8String((const uint8_t *)"==");// 2
+					dst += CUTF8String((const uint8_t *)"==");
 					pos += 2;
 					break;
 				case 3:
-					dst += CUTF8String((const uint8_t *)"=");// 1
+					dst += CUTF8String((const uint8_t *)"=");
 					pos += 1;
 					break;
 			}
@@ -130,16 +127,25 @@ void convert_to_utf8_header(const char *header_name,
 			dst += STRING_AFTER;
 			pos += STRING_AFTER_LENGTH;
 			
-			if(i != before_last)
-			{
-				dst += STRING_FLOW;// (2) 1
-				pos = STRING_FLOW_LENGTH;
-				max_line_length = MAX_LINE_LENGTH_FOR_HEADER - 5 - encoding_name.length();// =??B?, ?=
-			}
+			//more characters follow: fold the line
+			dst += STRING_FLOW;
+			pos = STRING_FLOW_LENGTH;
+			//an encoded word is at most 75 characters (RFC 2047 2): " =?utf-8?B?" + text + "?="
+			max_line_length = 75 - (int)(STRING_BEFORE_LENGTH + STRING_AFTER_LENGTH) - STRING_FLOW_LENGTH;
 			
 			buffer = CUTF8String((const uint8_t *)"");
 			buf_pos = 0;
 		}
+		
+		if((size_t)(buf_pos + seq_len) > buf.size())
+		{
+			buf.resize(buf_pos + seq_len);
+		}
+		for(int k = 0; k < seq_len; ++k)
+		{
+			buf[buf_pos++] = src.at(i + k);
+		}
+		i += (seq_len - 1);
 	}//for
 	
 	if(buf_pos)

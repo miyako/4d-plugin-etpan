@@ -1,0 +1,137 @@
+# Builds the libraries (scripts/build-*-deps) and the plugin on both platforms,
+# without signing or releasing, on every push to a branch, on pull requests,
+# and by hand. The library builds are cached under the scripts' hash, like in
+# release.yml; caches made on the default branch are reused by release runs.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRODUCT_NAME: etpan
+  MACOS_DEPLOYMENT_TARGET: '11.5'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: restore prebuilt libraries
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            lib/windows64/*.lib
+            include/windows
+          key: windows-deps-${{ hashFiles('scripts/build-windows-deps.ps1') }}
+
+      - name: build prebuilt libraries (cache miss)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: scripts/build-windows-deps.ps1 lib/windows64
+
+      - name: save prebuilt libraries
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            lib/windows64/*.lib
+            include/windows
+          key: windows-deps-${{ hashFiles('scripts/build-windows-deps.ps1') }}
+
+      - name: build x64
+        shell: cmd
+        run: |
+          del /q "%PRODUCT_NAME%.4dbase\Plugins\%PRODUCT_NAME%.bundle\Contents\Windows64\%PRODUCT_NAME%.4DX" 2>nul
+          msbuild "%PRODUCT_NAME%.sln" /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /m
+
+      - name: check the plugin
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Recurse -Filter "$env:PRODUCT_NAME.4DX" | Where-Object { $_.FullName -like "*Plugins*" } | Select-Object -First 1
+          if (-not $dll) { Write-Error "$env:PRODUCT_NAME.4DX not built"; exit 1 }
+          $dll | Format-List FullName, Length, LastWriteTime
+          # libetpan and OpenSSL are linked statically: no libetpan.dll / libssl DLL import
+          $dumpbin = Get-ChildItem -Recurse "${env:ProgramFiles}\Microsoft Visual Studio" -Filter dumpbin.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*Hostx64\x64*" } | Select-Object -First 1
+          $deps = & $dumpbin.FullName /dependents $dll.FullName
+          $deps
+          if ($deps -match '(?i)libetpan|libssl|libcrypto') { Write-Error "the plugin still imports a libetpan/OpenSSL DLL"; exit 1 }
+
+      - name: upload windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: '**/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/Windows64/${{ env.PRODUCT_NAME }}.4DX'
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: restore prebuilt libraries
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            a/*.a
+            include/mac
+          key: macos-deps-${{ hashFiles('scripts/build-macos-deps.sh') }}
+
+      - name: build prebuilt libraries (cache miss)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          brew install autoconf automake libtool || true
+          scripts/build-macos-deps.sh a
+
+      - name: save prebuilt libraries
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            a/*.a
+            include/mac
+          key: macos-deps-${{ hashFiles('scripts/build-macos-deps.sh') }}
+
+      - name: build macOS plugin (universal)
+        run: |
+          set -euo pipefail
+          PRODUCT="${{ env.PRODUCT_NAME }}"
+          PLUGINS_DIR="${PRODUCT}.4dbase/Plugins"
+          rm -f "${PLUGINS_DIR:?}/${PRODUCT:?}.bundle/Contents/MacOS/${PRODUCT:?}"
+          rm -rf "${PLUGINS_DIR:?}/Default" "${PLUGINS_DIR:?}/${PRODUCT:?}.build"
+          xcodebuild -project "${PRODUCT}.xcodeproj" -target "${PRODUCT}" -configuration Default \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            MACOSX_DEPLOYMENT_TARGET="${{ env.MACOS_DEPLOYMENT_TARGET }}" \
+            CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR="$PWD/$PLUGINS_DIR" build
+
+      - name: verify universal binary
+        run: |
+          set -euo pipefail
+          BIN="${{ env.PRODUCT_NAME }}.4dbase/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/MacOS/${{ env.PRODUCT_NAME }}"
+          lipo -info "$BIN"
+          lipo -info "$BIN" | grep -q arm64
+          lipo -info "$BIN" | grep -q x86_64
+          otool -L "$BIN"
+          if otool -L "$BIN" | tail -n +2 | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
+            echo "::error::$BIN links a library outside the system"
+            exit 1
+          fi

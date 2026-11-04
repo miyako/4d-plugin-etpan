@@ -302,53 +302,54 @@ void result_data(cJSON *result, int ret, CUTF8String& messsage_string)
 	PA_YieldAbsolute();
 }
 
-void result_connect(cJSON *result, int ret, int smtp_ssl, const char *smtp_server, uint16_t smtp_port)
+void result_connect(cJSON *result, int ret, int smtp_ssl, const char *smtp_server, uint16_t smtp_port, int smtp_verify_certificate_flag, CUTF8String& certificate_error)
 {
 	cJSON *r = cJSON_CreateObject();
 	cJSON_AddStringToObject(r, "operation", "connection");
 	cJSON_AddBoolToObject(r, "ssl", smtp_ssl);
 	cJSON_AddStringToObject(r, "host", smtp_server);
 	cJSON_AddNumberToObject(r, "port", smtp_port);
+	cJSON_AddBoolToObject(r, "verify_certificate", smtp_verify_certificate_flag);
+	if(certificate_error.length())
+	{
+		cJSON_AddStringToObject(r, "certificate_error", (const char *)certificate_error.c_str());
+	}
 	cJSON_AddStringToObject(r, "library_error", mailsmtp_strerror(ret));
 	cJSON_AddNumberToObject(r, "library_error_code", ret);
 	cJSON_AddItemToArray(result, r);
-	
+
 	PA_YieldAbsolute();
 }
 
-void result_login(cJSON *result, int ret, int smtp_tls, int smtp_allow_insecure)
+void result_login(cJSON *result, int ret, int smtp_tls, int smtp_allow_insecure, int smtp_verify_certificate_flag, CUTF8String& certificate_error)
 {
 	cJSON *r = cJSON_CreateObject();
 	cJSON_AddStringToObject(r, "operation", "identification");
 	cJSON_AddBoolToObject(r, "tls", smtp_tls);
 	cJSON_AddBoolToObject(r, "allow_insecure", smtp_allow_insecure);
+	cJSON_AddBoolToObject(r, "verify_certificate", smtp_verify_certificate_flag);
+	if(certificate_error.length())
+	{
+		cJSON_AddStringToObject(r, "certificate_error", (const char *)certificate_error.c_str());
+	}
 	cJSON_AddStringToObject(r, "library_error", mailsmtp_strerror(ret));
 	cJSON_AddNumberToObject(r, "library_error_code", ret);
 	cJSON_AddItemToArray(result, r);
-	
+
 	PA_YieldAbsolute();
 }
 
+//the OAuth 2 token is not returned: the result is often logged as is
 void result_auth(cJSON *result,
 								 int ret,
 								 CUTF8String& smtp_authentication,
-								 smtp_auth_type auth_type,
-								 const char *oauth2_access_token,
 								 const char *smtp_server,
 								 int smtp_tls)
 {
 	cJSON *r = cJSON_CreateObject();
 	cJSON_AddStringToObject(r, "operation", "authentication");
 	cJSON_AddStringToObject(r, "method", (char *)smtp_authentication.c_str());
-	
-	if((auth_type==smtp_auth_type_oauth2_gmail)||(auth_type==smtp_auth_type_oauth2_outlook))
-	{
-		cJSON_AddStringToObject(r, "oauth2_access_token", oauth2_access_token);
-	}else
-	{
-		cJSON_AddStringToObject(r, "server", smtp_server);
-	}
-	
+	cJSON_AddStringToObject(r, "server", smtp_server);
 	cJSON_AddBoolToObject(r, "tls", smtp_tls);
 	cJSON_AddStringToObject(r, "library_error", mailsmtp_strerror(ret));
 	cJSON_AddNumberToObject(r, "library_error_code", ret);
@@ -380,7 +381,10 @@ typedef struct
 	PA_long32 method_id;
 	const PA_Unichar *method;
 	size_t method_size;
+	int authenticating;
 }smtp_ctx;
+
+#define SMTP_LOG_HIDDEN "[authentication data not shown]\r\n"
 
 void mail_logger(mailsmtp *session, int log_type, const char *str, size_t size, void *context)
 {
@@ -391,11 +395,21 @@ void mail_logger(mailsmtp *session, int log_type, const char *str, size_t size, 
 	{
 	if((ctx->method_size) && (!PA_IsProcessDying()))
 	{
+		//MAILSTREAM_LOG_TYPE_DATA_SENT_PRIVATE is a password or a token, and what is
+		//sent during authentication is credentials too (SASL continuation lines
+		//are logged as ordinary data): the callback gets a placeholder instead
+		if((log_type == MAILSTREAM_LOG_TYPE_DATA_SENT_PRIVATE)
+			 || ((log_type == MAILSTREAM_LOG_TYPE_DATA_SENT) && (ctx->authenticating)))
+		{
+			log_type = MAILSTREAM_LOG_TYPE_DATA_SENT;
+			str = SMTP_LOG_HIDDEN;
+			size = sizeof(SMTP_LOG_HIDDEN) - 1;
+		}
+
 		switch (log_type)
 		{
-			case 5://write
-			case 6:
-			case 7:
+			case MAILSTREAM_LOG_TYPE_DATA_RECEIVED:
+			case MAILSTREAM_LOG_TYPE_DATA_SENT:
 			{
 				if(ctx->method_id)
 				{
@@ -468,6 +482,14 @@ void mail_logger(mailsmtp *session, int log_type, const char *str, size_t size, 
 
 #pragma mark -
 
+//a 1/0 option: a number or a Boolean (JSON true/false); anything else gives the default
+static int json_flag(cJSON *item, int default_value)
+{
+	if(cJSON_IsNumber(item)) return (!!item->valueint);
+	if(cJSON_IsBool(item)) return cJSON_IsTrue(item) ? 1 : 0;
+	return default_value;
+}
+
 void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 {
 	C_TEXT P1_params;
@@ -499,6 +521,7 @@ void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 			if(cJSON_IsArray(mimes))
 			{
 				smtp_ctx ctx;
+				ctx.authenticating = 0;
 				ctx.index = 0;
 				ctx.total = cJSON_GetArraySize(mimes);
 				ctx.method_id = 0;
@@ -535,11 +558,15 @@ void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 				uint16_t smtp_port = cJSON_IsNumber(port) ? port->valueint : 25;
 				
 				cJSON *tls = cJSON_GetObjectItem(params, "tls");
-				int smtp_tls = cJSON_IsNumber(tls) ? (!!tls->valueint) : 1;
+				int smtp_tls = json_flag(tls, 1);
 				int smtp_ssl = (!smtp_tls);
-				
+
 				cJSON *allowInsecure = cJSON_GetObjectItem(params, "allowInsecure");
-				int smtp_allow_insecure = cJSON_IsNumber(allowInsecure) ? (!!allowInsecure->valueint) : 0;
+				int smtp_allow_insecure = json_flag(allowInsecure, 0);
+
+				cJSON *verifyCertificate = cJSON_GetObjectItem(params, "verifyCertificate");
+				int smtp_verify_certificate_flag = json_flag(verifyCertificate, 1);
+				CUTF8String certificate_error;
 				
 				cJSON *timeout = cJSON_GetObjectItem(params, "timeout");
 				time_t smtp_timeout = cJSON_IsNumber(timeout) ? timeout->valueint : 0;
@@ -607,91 +634,95 @@ void etpan_smtp_send(sLONG_PTR *pResult, PackagePtr pParams)
 					void (*_mail_logger)(mailsmtp *, int, const char *, size_t, void *) = mail_logger;
 					mailsmtp_set_logger(smtp, _mail_logger, &ctx);
 					
-					if((ret = smtp_generic_connect(smtp, smtp_ssl, smtp_server, smtp_port) != MAILSMTP_NO_ERROR))
+					ret = smtp_generic_connect(smtp, smtp_ssl, smtp_server, smtp_port, smtp_verify_certificate_flag, certificate_error);
+
+					result_connect(sessionDetails, ret, smtp_ssl, smtp_server, smtp_port, smtp_verify_certificate_flag, certificate_error);
+					certificate_error = (const uint8_t *)"";
+
+					if(ret == MAILSMTP_NO_ERROR)
 					{
-						
+						ret = smtp_generic_greeting(smtp, smtp_tls, smtp_allow_insecure, &esmtp, smtp_server, smtp_verify_certificate_flag, certificate_error);
 					}
-					
-					result_connect(sessionDetails, ret, smtp_ssl, smtp_server, smtp_port);
-					
-					if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_generic_greeting(smtp, smtp_tls, smtp_allow_insecure, &esmtp) != MAILSMTP_NO_ERROR)))
-					{
-						
-					}
-					
-					result_login(sessionDetails, ret, smtp_tls, smtp_allow_insecure);
-					
+
+					result_login(sessionDetails, ret, smtp_tls, smtp_allow_insecure, smtp_verify_certificate_flag, certificate_error);
+
+					//what the plugin sends while authenticating carries the credentials
+					//(SASL continuation lines are not flagged private by libetpan)
+					ctx.authenticating = 1;
+
 					switch (auth_type)
 					{
 						case smtp_auth_type_digest:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_digest(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_digest(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_cram:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_cram(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_cram(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_login:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_login(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_login(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_plain:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_plain(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_plain(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_oauth2_gmail:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_oauth2(smtp, smtp_user, oauth2_access_token) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_oauth2(smtp, smtp_user, oauth2_access_token)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_oauth2_outlook:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_oauth2_outlook(smtp, smtp_user, oauth2_access_token) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_oauth2_outlook(smtp, smtp_user, oauth2_access_token)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_ntlm:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_ntlm(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_ntlm(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_srp:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_srp(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_srp(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_gssapi:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_gss(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_gss(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						case smtp_auth_type_kerberos_v4:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_kerberos_v4(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_kerberos_v4(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 						default:
-							if((ret == MAILSMTP_NO_ERROR) && ((ret = smtp_auth_auto(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR)))
+							if((ret == MAILSMTP_NO_ERROR) && (((ret = smtp_auth_auto(smtp, smtp_tls, &esmtp, smtp_server, smtp_user, smtp_password)) != MAILSMTP_NO_ERROR)))
 							{
 								
 							}
 							break;
 					}
 					
-					result_auth(sessionDetails, ret, smtp_authentication, auth_type, oauth2_access_token, smtp_server, smtp_tls);
+					ctx.authenticating = 0;
+
+					result_auth(sessionDetails, ret, smtp_authentication, smtp_server, smtp_tls);
 					
 					cJSON_AddBoolToObject(sessionInfo, "success", ret == MAILSMTP_NO_ERROR);
 					cJSON_AddItemToObject(sessionInfo, "details", sessionDetails);
@@ -1063,22 +1094,24 @@ void mime_create_main_content
 							for (std::vector<CUTF8String>::iterator it = reply_to_name.begin() ; it != reply_to_name.end(); ++it)
 								mailimf_address_list_add_parse(reply_to, (char *)it->c_str());
 					
+							//Bcc recipients get the message through RCPT TO only: a Bcc header
+							//would be delivered to every recipient and reveal them
 							if((fields = mailimf_fields_new_with_data(from_name.size() ? from : NULL,
 																												NULL /* sender */,
 																												reply_to_name.size() ? reply_to : NULL,
 																												to_name.size() ? to : NULL,
 																												cc_name.size() ? cc : NULL,
-																												bcc_name.size() ? bcc: NULL,
+																												NULL /* bcc */,
 																												NULL /* in-reply-to */,
 																												NULL /* references */,
 																												subject)))
 								 {
-									 //fields owns the lists passed above; the empty ones passed as NULL are still ours
+									 //fields owns the lists passed above; the ones passed as NULL are still ours
 									 if(!from_name.size()) mailimf_mailbox_list_free(from);
 									 if(!reply_to_name.size()) mailimf_address_list_free(reply_to);
 									 if(!to_name.size()) mailimf_address_list_free(to);
 									 if(!cc_name.size()) mailimf_address_list_free(cc);
-									 if(!bcc_name.size()) mailimf_address_list_free(bcc);
+									 mailimf_address_list_free(bcc);
 
 									 if((mime = mailmime_new_message_data(NULL)))
 									 {
@@ -1159,16 +1192,187 @@ void mime_create_main_content
 	}
 }
 
+#pragma mark TLS
+
+//libetpan calls this before the TLS handshake: send the host name (SNI) so that
+//a server hosting several certificates presents the one for this host
+static void smtp_ssl_context_callback(struct mailstream_ssl_context *ssl_context, void *data)
+{
+	const char *host = (const char *)data;
+	if((host) && (*host))
+	{
+		mailstream_ssl_set_server_name(ssl_context, (char *)host);
+	}
+}
+
+//libetpan doesn't check the certificate the server presents: check the chain and
+//the host name against the system trust store (Keychain / Windows certificate store)
+int smtp_verify_certificate(mailsmtp *smtp, const char *host, CUTF8String& certificate_error)
+{
+	int ret = MAILSMTP_ERROR_SSL;
+	
+	carray *chain = (smtp && smtp->stream) ? mailstream_get_certificate_chain(smtp->stream) : NULL;
+	
+	if((!chain) || (!carray_count(chain)))
+	{
+		certificate_error = (const uint8_t *)"the server presented no certificate";
+		if(chain) mailstream_certificate_chain_free(chain);
+		return ret;
+	}
+	
+#if VERSIONMAC
+	CFMutableArrayRef certificates = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+	for(unsigned int i = 0; i < carray_count(chain); ++i)
+	{
+		MMAPString *der = (MMAPString *)carray_get(chain, i);
+		CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)der->str, der->len);
+		if(data)
+		{
+			SecCertificateRef certificate = SecCertificateCreateWithData(kCFAllocatorDefault, data);
+			if(certificate)
+			{
+				CFArrayAppendValue(certificates, certificate);
+				CFRelease(certificate);
+			}
+			CFRelease(data);
+		}
+	}
+	
+	if(CFArrayGetCount(certificates))
+	{
+		CFStringRef hostname = CFStringCreateWithCString(kCFAllocatorDefault, host, kCFStringEncodingUTF8);
+		SecPolicyRef policy = SecPolicyCreateSSL(true, hostname);
+		SecTrustRef trust = NULL;
+		if(SecTrustCreateWithCertificates(certificates, policy, &trust) == errSecSuccess)
+		{
+			CFErrorRef error = NULL;
+			if(SecTrustEvaluateWithError(trust, &error))
+			{
+				ret = MAILSMTP_NO_ERROR;
+			}else
+			{
+				certificate_error = (const uint8_t *)"the server certificate is not trusted";
+				if(error)
+				{
+					CFStringRef description = CFErrorCopyDescription(error);
+					if(description)
+					{
+						CFIndex size = CFStringGetMaximumSizeForEncoding(CFStringGetLength(description), kCFStringEncodingUTF8) + 1;
+						std::vector<char> buf(size);
+						if(CFStringGetCString(description, &buf[0], size, kCFStringEncodingUTF8))
+						{
+							certificate_error = (const uint8_t *)&buf[0];
+						}
+						CFRelease(description);
+					}
+					CFRelease(error);
+				}
+			}
+			CFRelease(trust);
+		}else
+		{
+			certificate_error = (const uint8_t *)"the server certificate could not be evaluated";
+		}
+		if(policy) CFRelease(policy);
+		if(hostname) CFRelease(hostname);
+	}else
+	{
+		certificate_error = (const uint8_t *)"the server certificate could not be read";
+	}
+	CFRelease(certificates);
+#else
+	HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL);
+	PCCERT_CONTEXT leaf = NULL;
+	if(store)
+	{
+		//the first certificate is the server's, the others are intermediates
+		for(unsigned int i = 0; i < carray_count(chain); ++i)
+		{
+			MMAPString *der = (MMAPString *)carray_get(chain, i);
+			CertAddEncodedCertificateToStore(store,
+																			 X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+																			 (const BYTE *)der->str,
+																			 (DWORD)der->len,
+																			 CERT_STORE_ADD_ALWAYS,
+																			 i == 0 ? &leaf : NULL);
+		}
+	}
+	
+	if(leaf)
+	{
+		LPSTR usage[] = {(LPSTR)szOID_PKIX_KP_SERVER_AUTH};
+		CERT_CHAIN_PARA chain_para;
+		memset(&chain_para, 0, sizeof(chain_para));
+		chain_para.cbSize = sizeof(chain_para);
+		chain_para.RequestedUsage.dwType = USAGE_MATCH_TYPE_AND;
+		chain_para.RequestedUsage.Usage.cUsageIdentifier = 1;
+		chain_para.RequestedUsage.Usage.rgpszUsageIdentifier = usage;
+		
+		PCCERT_CHAIN_CONTEXT chain_context = NULL;
+		if(CertGetCertificateChain(NULL, leaf, NULL, store, &chain_para, 0, NULL, &chain_context))
+		{
+			int len = MultiByteToWideChar(CP_UTF8, 0, host, -1, NULL, 0);
+			std::vector<wchar_t> hostname(len > 0 ? len : 1);
+			if(len > 0) MultiByteToWideChar(CP_UTF8, 0, host, -1, &hostname[0], len);
+			
+			SSL_EXTRA_CERT_CHAIN_POLICY_PARA ssl_para;
+			memset(&ssl_para, 0, sizeof(ssl_para));
+			ssl_para.cbSize = sizeof(ssl_para);
+			ssl_para.dwAuthType = AUTHTYPE_SERVER;
+			ssl_para.pwszServerName = &hostname[0];
+			
+			CERT_CHAIN_POLICY_PARA policy_para;
+			memset(&policy_para, 0, sizeof(policy_para));
+			policy_para.cbSize = sizeof(policy_para);
+			policy_para.pvExtraPolicyPara = &ssl_para;
+			
+			CERT_CHAIN_POLICY_STATUS policy_status;
+			memset(&policy_status, 0, sizeof(policy_status));
+			policy_status.cbSize = sizeof(policy_status);
+			
+			if((CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL, chain_context, &policy_para, &policy_status))
+				 && (policy_status.dwError == 0))
+			{
+				ret = MAILSMTP_NO_ERROR;
+			}else
+			{
+				char buf[80];
+				snprintf(buf, sizeof(buf), "the server certificate is not trusted (0x%08lX)", (unsigned long)policy_status.dwError);
+				certificate_error = (const uint8_t *)buf;
+			}
+			CertFreeCertificateChain(chain_context);
+		}else
+		{
+			certificate_error = (const uint8_t *)"the server certificate chain could not be built";
+		}
+		CertFreeCertificateContext(leaf);
+	}else
+	{
+		certificate_error = (const uint8_t *)"the server certificate could not be read";
+	}
+	if(store) CertCloseStore(store, 0);
+#endif
+	
+	mailstream_certificate_chain_free(chain);
+	
+	return ret;
+}
+
 #pragma mark Connect
 
-int smtp_generic_connect(mailsmtp *smtp, int smtp_ssl, char *smtp_server, uint16_t smtp_port)
+int smtp_generic_connect(mailsmtp *smtp, int smtp_ssl, char *smtp_server, uint16_t smtp_port, int smtp_verify_certificate_flag, CUTF8String& certificate_error)
 {
 	int ret = MAILSMTP_NO_ERROR;
 	
 	if(smtp_ssl)
 	{
 		//use SMTP over SSL
-		ret = mailsmtp_ssl_connect(smtp, smtp_server, smtp_port);
+		ret = mailsmtp_ssl_connect_with_callback(smtp, smtp_server, smtp_port, smtp_ssl_context_callback, smtp_server);
+		
+		if((ret == MAILSMTP_NO_ERROR) && (smtp_verify_certificate_flag))
+		{
+			ret = smtp_verify_certificate(smtp, smtp_server, certificate_error);
+		}
 		
 	}else
 	{
@@ -1178,7 +1382,7 @@ int smtp_generic_connect(mailsmtp *smtp, int smtp_ssl, char *smtp_server, uint16
 	return ret;
 }
 
-int smtp_generic_greeting(mailsmtp *smtp, int smtp_tls, int smtp_allow_insecure, int *esmtp)
+int smtp_generic_greeting(mailsmtp *smtp, int smtp_tls, int smtp_allow_insecure, int *esmtp, char *smtp_server, int smtp_verify_certificate_flag, CUTF8String& certificate_error)
 {
 	int ret = MAILSMTP_NO_ERROR;
 	
@@ -1188,15 +1392,23 @@ int smtp_generic_greeting(mailsmtp *smtp, int smtp_tls, int smtp_allow_insecure,
 		*esmtp = 1;
 		if((smtp_tls) && (!smtp_allow_insecure))
 		{//STARTTLS
-			if((ret = mailsmtp_socket_starttls(smtp)) == MAILSMTP_NO_ERROR)
-			{//TLS/EHLO
-				if((ret = mailesmtp_ehlo(smtp)) == MAILSMTP_NO_ERROR)
+			if((ret = mailsmtp_socket_starttls_with_callback(smtp, smtp_ssl_context_callback, smtp_server)) == MAILSMTP_NO_ERROR)
+			{
+				if(smtp_verify_certificate_flag)
 				{
-					//TLS/OK
-				}else if(ret == MAILSMTP_ERROR_NOT_IMPLEMENTED)
-				{//TLS/HELO
-					*esmtp = 0;
-					ret = mailsmtp_helo(smtp);
+					ret = smtp_verify_certificate(smtp, smtp_server, certificate_error);
+				}
+				
+				if(ret == MAILSMTP_NO_ERROR)
+				{//TLS/EHLO
+					if((ret = mailesmtp_ehlo(smtp)) == MAILSMTP_NO_ERROR)
+					{
+						//TLS/OK
+					}else if(ret == MAILSMTP_ERROR_NOT_IMPLEMENTED)
+					{//TLS/HELO
+						*esmtp = 0;
+						ret = mailsmtp_helo(smtp);
+					}
 				}
 			}
 		}
@@ -1226,43 +1438,50 @@ int smtp_auth(mailsmtp *smtp, const char *method, char *smtp_server, char *smtp_
 														 NULL);
 }
 
+//AUTO: try the mechanisms the server announced in EHLO, strongest first.
+//After a failed AUTH the session is still usable (RFC 4954), so the next
+//mechanism is tried directly; no new greeting.
 int smtp_auth_auto(mailsmtp *smtp, int smtp_tls, int *esmtp, char *smtp_server, char *smtp_user, char *smtp_password)
 {
-	int ret = MAILSMTP_NO_ERROR;
-	
-	if((ret = smtp_auth(smtp, "DIGEST-MD5", smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR))
+	if((!(smtp->auth & ~MAILSMTP_AUTH_CHECKED)) || (!smtp_user) || (!*smtp_user))
 	{
-		//try again with different auth method
-		if((ret = smtp_generic_greeting(smtp, smtp_tls, 0, esmtp) != MAILSMTP_NO_ERROR))
-		{
-			if((ret = smtp_auth(smtp, "CRAM-MD5", smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR))
-			{
-				//try again with different auth method
-				if((ret = smtp_generic_greeting(smtp, smtp_tls, 0, esmtp) != MAILSMTP_NO_ERROR))
-				{
-					if((ret = smtp_auth(smtp, "LOGIN", smtp_server, smtp_user, smtp_password) != MAILSMTP_NO_ERROR))
-					{
-						//try again with different auth method
-						if((ret = smtp_generic_greeting(smtp, smtp_tls, 0, esmtp) != MAILSMTP_NO_ERROR))
-						{
-							ret = smtp_auth(smtp, "PLAIN", smtp_server, smtp_user, smtp_password);
-						}
-					}
-				}
-			}
-		}
+		//the server doesn't offer authentication (e.g. a local relay),
+		//or there is no user name to authenticate with: nothing to do
+		return MAILSMTP_NO_ERROR;
 	}
+	
+	int ret = MAILSMTP_ERROR_AUTH_NOT_SUPPORTED;
+	
+	if(smtp->auth & MAILSMTP_AUTH_DIGEST_MD5)
+	{
+		if((ret = smtp_auth_digest(smtp, smtp_tls, esmtp, smtp_server, smtp_user, smtp_password)) == MAILSMTP_NO_ERROR) return ret;
+	}
+	if(smtp->auth & MAILSMTP_AUTH_CRAM_MD5)
+	{
+		if((ret = smtp_auth_cram(smtp, smtp_tls, esmtp, smtp_server, smtp_user, smtp_password)) == MAILSMTP_NO_ERROR) return ret;
+	}
+	if(smtp->auth & MAILSMTP_AUTH_LOGIN)
+	{
+		if((ret = smtp_auth_login(smtp, smtp_tls, esmtp, smtp_server, smtp_user, smtp_password)) == MAILSMTP_NO_ERROR) return ret;
+	}
+	if(smtp->auth & MAILSMTP_AUTH_PLAIN)
+	{
+		if((ret = smtp_auth_plain(smtp, smtp_tls, esmtp, smtp_server, smtp_user, smtp_password)) == MAILSMTP_NO_ERROR) return ret;
+	}
+	
 	return ret;
 }
 
+//LOGIN and PLAIN go through mailsmtp_auth_type: libetpan implements them itself
+//when it is built without Cyrus SASL (Windows), and uses SASL otherwise
 int smtp_auth_login(mailsmtp *smtp, int smtp_tls, int *esmtp, char *smtp_server, char *smtp_user, char *smtp_password)
 {
-	return smtp_auth(smtp, "LOGIN", smtp_server, smtp_user, smtp_password);
+	return mailsmtp_auth_type(smtp, smtp_user, smtp_password, MAILSMTP_AUTH_LOGIN);
 }
 
 int smtp_auth_plain(mailsmtp *smtp, int smtp_tls, int *esmtp, char *smtp_server, char *smtp_user, char *smtp_password)
 {
-	return smtp_auth(smtp, "PLAIN", smtp_server, smtp_user, smtp_password);
+	return mailsmtp_auth_type(smtp, smtp_user, smtp_password, MAILSMTP_AUTH_PLAIN);
 }
 
 int smtp_auth_cram(mailsmtp *smtp, int smtp_tls, int *esmtp, char *smtp_server, char *smtp_user, char *smtp_password)

@@ -23,9 +23,10 @@ The plugin sends email over SMTP with [libetpan](http://www.etpan.org/libetpan.h
 
 ## Requirements & platform notes
 
-- **The prebuilt libraries in this repository are not universal yet.** `Contents/MacOS/libetpan.20.dylib`, `libssl.1.0.0.dylib` and `libcrypto.1.0.0.dylib` are i386 + x86_64 only (libetpan 1.7, OpenSSL 1.0.2k). Until they are rebuilt, the plugin only runs in an Intel (or Rosetta) 4D on macOS, and the release workflow stops at its library check. On Windows, `Contents/Windows64/libetpan.dll` (libetpan with OpenSSL 1.0.1j linked in) must stay next to `etpan.4DX`.
+- **libetpan and OpenSSL are linked statically** (current source, 2026): libetpan 1.10.1 and OpenSSL 3.5.9 (the long-term support line) on both platforms. The bundle no longer carries `libetpan.20.dylib`, `libssl.1.0.0.dylib`, `libcrypto.1.0.0.dylib` (macOS, libetpan 1.7 and OpenSSL 1.0.2k, Intel only) or `libetpan.dll` (Windows, OpenSSL 1.0.1j). The libraries are not in the repository: `scripts/build-macos-deps.sh` and `scripts/build-windows-deps.ps1` build them from pinned sources, and the CI and release workflows run them (see [Building](#building)).
+- **SASL mechanisms differ by platform.** On macOS, libetpan uses the system Cyrus SASL, so every method in `authentication` is available. On Windows it is built without SASL: `LOGIN`, `PLAIN`, `GMAIL` and `OUTLOOK` work, while `CRAM-MD5`, `DIGEST-MD5`, `NTLM`, `SRP`, `GSSAPI` and `KERBEROS_V4` fail with "not implemented" (code `5`).
 - **The command blocks the calling process** until the whole session is over: DNS lookup, connection, TLS handshake, authentication and every message. Call it from a dedicated process (`New process`, or a worker) if the user interface must stay responsive. The plugin is not declared thread-safe, so it can't run in a preemptive process.
-- **The server certificate is not checked.** The plugin doesn't ask libetpan to verify the certificate or host name for SSL or STARTTLS connections, so the connection is encrypted but not authenticated (inferred from the code: no verification call is made; libetpan doesn't verify by default).
+- **The server certificate is checked** (current source, 2026; release 1.0 didn't check it). After the TLS handshake (SSL on connect, or `STARTTLS`), the plugin checks the certificate chain and the host name against the system's trusted certificates (the macOS Keychain, the Windows certificate store). A certificate that isn't trusted, has expired, or is for another host stops the session; the reason is in `certificate_error`. The plugin also sends the host name in the handshake (SNI), so servers that host several certificates present the right one. Pass `"verifyCertificate":0` to turn the check off, for example for a test server with a self-signed certificate.
 - **Parameters are JSON text**, not objects: build them with `JSON Stringify` and `JSON Stringify array`, and parse the result with `JSON Parse`.
 - **Failures are reported in the result, never as a 4D error.** Check `session.success` and each `messages[i].success`.
 
@@ -60,8 +61,9 @@ If the session fails (connection, greeting or authentication), no message is sen
 |---|---|---|
 | `host` | Text | SMTP server. Default `localhost` |
 | `port` | Longint | Default `25`. Common values: `587` (submission + STARTTLS), `465` (SSL on connect) |
-| `tls` | Longint (`1`/`0`) | `1` (default): connect in plain text, then `STARTTLS`. `0`: SSL on connect (SMTPS, usually port `465`). See the note below about Boolean values |
-| `allowInsecure` | Longint (`1`/`0`) | `1`: with `tls` = `1`, skip `STARTTLS` and stay in plain text; also allows the `HELO` fallback. Default `0` |
+| `tls` | Longint (`1`/`0`) or Boolean | `1` (default): connect in plain text, then `STARTTLS`. `0`: SSL on connect (SMTPS, usually port `465`) |
+| `allowInsecure` | Longint (`1`/`0`) or Boolean | `1`: with `tls` = `1`, skip `STARTTLS` and stay in plain text; also allows the `HELO` fallback. Default `0` |
+| `verifyCertificate` | Longint (`1`/`0`) or Boolean | `1` (default): stop the session when the server certificate isn't trusted for `host`. `0`: accept any certificate. Not used when no TLS is negotiated (`allowInsecure` = `1`) |
 | `timeout` | Longint | Network timeout in seconds. `0` (default) uses libetpan's built-in default, it is **not** "no timeout" |
 | `user` | Text | User name for authentication |
 | `pass` | Text | Password |
@@ -70,12 +72,13 @@ If the session fails (connection, greeting or authentication), no message is sen
 | `sender` | Text | Envelope sender, `Name <name@example.com>` or `name@example.com`. Only the address goes into `MAIL FROM` |
 | `context` | Object | Any object; it is passed to the callback as JSON text in `$4`. Other types are ignored |
 
-**`tls` and `allowInsecure` are read only when they are numbers.** A Boolean (`True`/`False` in `OB SET`, `true`/`false` in JSON) is ignored and the default applies (`tls` = `1`, `allowInsecure` = `0`). Pass `1` or `0`.
+`tls`, `allowInsecure` and `verifyCertificate` accept a number or a Boolean (`True`/`False` in `OB SET`, `true`/`false` in JSON). Any other type gives the default. Release 1.0 read only numbers and ignored Booleans.
 
 Authentication methods:
-- `LOGIN`, `PLAIN`, `CRAM-MD5`, `DIGEST-MD5`, `NTLM`, `SRP`, `GSSAPI`, `KERBEROS_V4` go through SASL with `user` and `pass`. **On Windows**, `NTLM` is known to fail.
+- `LOGIN` and `PLAIN` use `user` and `pass`, on both platforms.
+- `CRAM-MD5`, `DIGEST-MD5`, `NTLM`, `SRP`, `GSSAPI`, `KERBEROS_V4` go through SASL with `user` and `pass`: macOS only (see [Requirements](#requirements--platform-notes)).
 - `GMAIL` and `OUTLOOK` use the `XOAUTH2` mechanism with `user` and `accessToken`.
-- `AUTO` tries `DIGEST-MD5` first. **It does not reliably fall back to the other methods** and can report success without having authenticated (see [Error handling](#error-handling--troubleshooting)); name the method explicitly.
+- `AUTO` tries the methods the server announces in its `EHLO` reply, in the order `DIGEST-MD5`, `CRAM-MD5`, `LOGIN`, `PLAIN`, and stops at the first that succeeds. If the server announces none, or `user` is empty, the plugin doesn't authenticate and the step succeeds (a relay that needs no login). If every announced method fails, the step fails with the last method's error. (Current source, 2026: release 1.0 stopped after a failed `DIGEST-MD5` and could report success without having authenticated.)
 
 #### Message object
 
@@ -88,7 +91,7 @@ Authentication methods:
 | `from` | Text array | `From:` header, each element `Name <name@example.com>` |
 | `to` | Text array | `To:` header and recipients |
 | `cc` | Text array | `Cc:` header and recipients |
-| `bcc` | Text array | Recipients. **Also written as a `Bcc:` header** in the message every recipient receives (see [Error handling](#error-handling--troubleshooting)) |
+| `bcc` | Text array | Recipients that get the message through `RCPT TO` only. No `Bcc:` header is written (current source, 2026; release 1.0 wrote one, so every recipient could see the Bcc addresses) |
 | `replyTo` | Text array | `Reply-To:` header |
 
 How `charset` is applied:
@@ -112,8 +115,8 @@ Characters that have no equivalent in the target Japanese encoding are dropped (
   "session": {
     "success": true,
     "details": [
-      {"operation": "connection", "ssl": false, "host": "smtp.example.com", "port": 587, "library_error": "…", "library_error_code": 0},
-      {"operation": "identification", "tls": true, "allow_insecure": false, "library_error": "…", "library_error_code": 0},
+      {"operation": "connection", "ssl": false, "host": "smtp.example.com", "port": 587, "verify_certificate": true, "library_error": "…", "library_error_code": 0},
+      {"operation": "identification", "tls": true, "allow_insecure": false, "verify_certificate": true, "library_error": "…", "library_error_code": 0},
       {"operation": "authentication", "method": "LOGIN", "server": "smtp.example.com", "tls": true, "library_error": "…", "library_error_code": 0}
     ]
   },
@@ -138,8 +141,9 @@ Characters that have no equivalent in the target Japanese encoding are dropped (
 | `messages[i].success` | Boolean | The server accepted the message data |
 | `messages[i].details` | Collection | `mail`, then one `rcpt` per recipient (property `to`, `cc` or `bcc` holds the address), then `data` (`size` = bytes sent) when `DATA` was accepted |
 | `library_error` / `library_error_code` | Text / Longint | libetpan's message and code for that step (`0` = no error) |
+| `certificate_error` | Text | In `connection` (SSL on connect) or `identification` (`STARTTLS`): why the server certificate was rejected. Present only then; `library_error_code` is `27` |
 
-With `GMAIL` / `OUTLOOK`, the `authentication` entry holds `oauth2_access_token` (the token itself) instead of `server`: don't log the result as is.
+The result never contains the password or the OAuth 2 token (current source, 2026; release 1.0 put the token in the `authentication` entry).
 
 #### Callback method
 
@@ -156,11 +160,11 @@ MyCallback ( index ; total ; log ; context )
 | `$3` | Text | Raw SMTP traffic for this chunk (commands, replies, message data) |
 | `$4` | Text | `context` from `params`, as JSON text (`""` if none) |
 
-The method is looked up by name; if no project method has that name, the plugin falls back to `EXECUTE METHOD` with the same parameters. It runs in the calling process, during the send. **`$3` includes the authentication exchange**, i.e. the Base64-encoded user name and password for `LOGIN`/`PLAIN` and the token for `GMAIL`/`OUTLOOK`: don't write it to a log as is.
+The method is looked up by name; if no project method has that name, the plugin falls back to `EXECUTE METHOD` with the same parameters. It runs in the calling process, during the send. What the plugin sends during authentication (the Base64-encoded user name and password, the OAuth 2 token) reaches `$3` as `[authentication data not shown]`; the server's replies are passed unchanged (current source, 2026; release 1.0 passed the credentials).
 
 ### Example
 
-From the original README: the same message sent once in each supported encoding. Note that `tls` and `allowInsecure` are Booleans here, so they are ignored and the defaults (STARTTLS required) apply, which happens to match.
+From the original README: the same message sent once in each supported encoding.
 
 ```4d
 C_OBJECT($m;$o)
@@ -329,17 +333,25 @@ End if
 ## Error handling & troubleshooting
 
 - **Nothing happens and the result is `{"messages":[],"session":{}}`**: `params` or `messages` is not valid JSON, or `messages` is not an array. Build them with `JSON Stringify` / `JSON Stringify array`.
-- **`library_error_code` is `1` ("unexpected error code") for connection, identification or authentication**: the plugin keeps only "failed / not failed" for these three steps, not libetpan's real code. Use the callback (`$3`) to see the server's actual reply. The codes for `mail`, `rcpt` and `data` are the real ones.
-- **`AUTO` authentication reports success but the server then refuses `MAIL FROM` or `RCPT TO`**: `AUTO` tries `DIGEST-MD5`, and when that fails it doesn't fall back as intended; the session can be marked as successful without being authenticated. Set `authentication` explicitly.
-- **`tls` / `allowInsecure` seem to have no effect**: they were passed as Booleans. Pass `1` or `0`.
+- **The session fails with `certificate_error`**: the server certificate isn't trusted by the system, has expired, or doesn't match `host` (connect with the name in the certificate, not an IP address or an alias). For a test server with a self-signed certificate, add the certificate to the system's trusted certificates or pass `"verifyCertificate":0`.
+- **`library_error_code` is `5` ("not implemented") for authentication on Windows**: the method needs SASL, which the Windows build doesn't have. Use `LOGIN`, `PLAIN`, `GMAIL`/`OUTLOOK`, or `AUTO`.
+- **`library_error_code` is `1` for connection, identification or authentication with release 1.0**: release 1.0 kept only "failed / not failed" for these three steps. The current source returns libetpan's real code.
 - **The connection hangs for a long time on an unreachable host**: `timeout` `0` means libetpan's default, not a short timeout. Set `timeout` (seconds), and run the command in its own process.
-- **Bcc recipients are visible**: the `bcc` addresses are written into a `Bcc:` header of the message, so every recipient can see them. Until this is changed, send the Bcc copies as a separate message, or don't use `bcc` when that matters.
-- **UTF-8 subjects or display names lose characters**: the UTF-8 header encoder drops some bytes (for example `Hello` arrives as `ello`, and a multi-byte character near the end of the text can be cut). This affects the default `charset` `utf-8` only. The Japanese encodings are not affected.
+- **Bcc recipients are visible, or UTF-8 subjects lose characters (`Hello World` arriving as `Hello orld`)**: both are release 1.0 bugs, fixed in the current source (2026). The UTF-8 header encoder now keeps every character, never splits one between two encoded words, and keeps each encoded word within 75 characters (RFC 2047).
 - **A message is missing from `messages`**: its `MAIL FROM` was refused, or the array element was not an object. The `mail` entry with the error is not returned either; use the callback to see the reply.
 - **A recipient is silently not used**: the string couldn't be parsed as one mailbox (`Name <addr>` or `addr`). Groups are not supported.
-- **Credentials in logs**: the callback's `$3` contains the authentication exchange, and the result contains the OAuth token for `GMAIL`/`OUTLOOK`. Filter both before logging.
-- **`NTLM` fails on Windows**: known issue; use another method.
-- **Certificate errors are never reported**: the server certificate is not verified, so a TLS connection to the wrong server succeeds. Only use the plugin on networks where that risk is acceptable.
+- **Credentials in logs with release 1.0**: its callback received the authentication exchange and its result contained the OAuth token. The current source hides both.
+
+---
+
+## Building
+
+The libraries are built from pinned sources by two scripts; their output is ignored by git.
+
+- **macOS**: `scripts/build-macos-deps.sh` builds OpenSSL and libetpan once per architecture and merges them into universal archives in `a/` (`libetpan.a`, `libssl.a`, `libcrypto.a`), and copies libetpan's headers to `include/mac/`. It needs the Xcode command line tools and `brew install autoconf automake libtool`. The Xcode project then links those archives plus `-lsasl2 -lz -liconv` and `Security.framework`.
+- **Windows**: `scripts\build-windows-deps.ps1` builds OpenSSL (static, `/MT`) and libetpan from its `build-windows` Visual Studio project, turned into a static library without SASL or zlib, into `lib\windows64\` (`libetpan.lib`, `libssl.lib`, `libcrypto.lib`), and copies the headers to `include\windows\`. It needs Visual Studio 2022 with the C++ tools and Strawberry Perl.
+
+`.github/workflows/ci.yml` runs both scripts and builds the plugin, unsigned, on every push; `release.yml` does the same before signing. Both cache the libraries under the hash of the script, so changing a pinned version rebuilds them.
 
 ---
 
@@ -366,7 +378,7 @@ $info:=JSON Parse(etpan smtp send (JSON Stringify($o);JSON Stringify array($mm))
 
 ## Notes on Japanese encodings
 
-From the original README (Japanese). The claim that UTF-8 headers are never split inside a character does not hold for the current UTF-8 encoder, see [Error handling](#error-handling--troubleshooting).
+From the original README (Japanese). For UTF-8 the claim that headers are never split inside a character holds since the 2026 fix of the UTF-8 encoder; release 1.0 could split one.
 
 ### ISO-2022-JPについて
 

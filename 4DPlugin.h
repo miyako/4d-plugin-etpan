@@ -11,6 +11,13 @@
 #include "libetpan/libetpan.h"
 #include "cJSON.h"
 
+#if VERSIONMAC
+#include <Security/Security.h>
+#else
+#include <wincrypt.h>
+#pragma comment(lib, "crypt32.lib")
+#endif
+
 #include "charset.h"
 
 int parse_address(
@@ -36,10 +43,12 @@ int smtp_auth_kerberos_v4(mailsmtp *smtp, int smtp_tls, int *esmtp, char *smtp_s
 int smtp_auth_oauth2(mailsmtp *smtp, char *smtp_user, char *oauth2_access_token);
 int smtp_auth_oauth2_outlook(mailsmtp *smtp, char *smtp_user, char *oauth2_access_token);
 
-#pragma CONNECT
-int smtp_generic_connect(mailsmtp *smtp, int smtp_ssl, char *smtp_server, uint16_t smtp_port);
+#pragma mark CONNECT
+int smtp_generic_connect(mailsmtp *smtp, int smtp_ssl, char *smtp_server, uint16_t smtp_port, int smtp_verify_certificate_flag, CUTF8String& certificate_error);
 
-int smtp_generic_greeting(mailsmtp *smtp, int smtp_tls, int smtp_allow_insecure, int *esmtp);
+int smtp_generic_greeting(mailsmtp *smtp, int smtp_tls, int smtp_allow_insecure, int *esmtp, char *smtp_server, int smtp_verify_certificate_flag, CUTF8String& certificate_error);
+
+int smtp_verify_certificate(mailsmtp *smtp, const char *host, CUTF8String& certificate_error);
 
 void mime_create_main_content
 (CUTF8String& subject_string,

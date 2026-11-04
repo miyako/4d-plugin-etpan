@@ -60,9 +60,9 @@
 		D175D9CD1A02E8DD0006B569 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D175D9CC1A02E8DD0006B569 /* CoreGraphics.framework */; };
 		D1C5D2651E8DDDCA00552B36 /* iso2022jp.c in Sources */ = {isa = PBXBuildFile; fileRef = D1C5D2631E8DDDCA00552B36 /* iso2022jp.c */; };
 		D1C5D2661E8DDDCA00552B36 /* iso2022jp.h in Headers */ = {isa = PBXBuildFile; fileRef = D1C5D2641E8DDDCA00552B36 /* iso2022jp.h */; };
-		D1DB82E51E8BDF2A007D5EA8 /* libcrypto.1.0.0.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = D1DB82E21E8BDF2A007D5EA8 /* libcrypto.1.0.0.dylib */; };
-		D1DB82E61E8BDF2A007D5EA8 /* libetpan.20.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = D1DB82E31E8BDF2A007D5EA8 /* libetpan.20.dylib */; };
-		D1DB82E71E8BDF2A007D5EA8 /* libssl.1.0.0.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = D1DB82E41E8BDF2A007D5EA8 /* libssl.1.0.0.dylib */; };
+		D1DB82E51E8BDF2A007D5EA8 /* libcrypto.a in Frameworks */ = {isa = PBXBuildFile; fileRef = D1DB82E21E8BDF2A007D5EA8 /* libcrypto.a */; };
+		D1DB82E61E8BDF2A007D5EA8 /* libetpan.a in Frameworks */ = {isa = PBXBuildFile; fileRef = D1DB82E31E8BDF2A007D5EA8 /* libetpan.a */; };
+		D1DB82E71E8BDF2A007D5EA8 /* libssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = D1DB82E41E8BDF2A007D5EA8 /* libssl.a */; };
 		D1DFB3711E8F3D7F008CEE6A /* charset.c in Sources */ = {isa = PBXBuildFile; fileRef = D1DFB3701E8F3D7F008CEE6A /* charset.c */; };
 		D1DFB3741E8F57DF008CEE6A /* utf8.c in Sources */ = {isa = PBXBuildFile; fileRef = D1DFB3721E8F57DF008CEE6A /* utf8.c */; };
 		D1DFB3751E8F57DF008CEE6A /* utf8.h in Headers */ = {isa = PBXBuildFile; fileRef = D1DFB3731E8F57DF008CEE6A /* utf8.h */; };
@@ -142,9 +142,9 @@
 		D175D9CC1A02E8DD0006B569 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		D1C5D2631E8DDDCA00552B36 /* iso2022jp.c */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; path = iso2022jp.c; sourceTree = "<group>"; };
 		D1C5D2641E8DDDCA00552B36 /* iso2022jp.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = iso2022jp.h; sourceTree = "<group>"; };
-		D1DB82E21E8BDF2A007D5EA8 /* libcrypto.1.0.0.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libcrypto.1.0.0.dylib; path = etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS/libcrypto.1.0.0.dylib; sourceTree = "<group>"; };
-		D1DB82E31E8BDF2A007D5EA8 /* libetpan.20.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libetpan.20.dylib; path = etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS/libetpan.20.dylib; sourceTree = "<group>"; };
-		D1DB82E41E8BDF2A007D5EA8 /* libssl.1.0.0.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libssl.1.0.0.dylib; path = etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS/libssl.1.0.0.dylib; sourceTree = "<group>"; };
+		D1DB82E21E8BDF2A007D5EA8 /* libcrypto.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libcrypto.a; path = a/libcrypto.a; sourceTree = "<group>"; };
+		D1DB82E31E8BDF2A007D5EA8 /* libetpan.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libetpan.a; path = a/libetpan.a; sourceTree = "<group>"; };
+		D1DB82E41E8BDF2A007D5EA8 /* libssl.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libssl.a; path = a/libssl.a; sourceTree = "<group>"; };
 		D1DFB3701E8F3D7F008CEE6A /* charset.c */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; path = charset.c; sourceTree = "<group>"; };
 		D1DFB3721E8F57DF008CEE6A /* utf8.c */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; path = utf8.c; sourceTree = "<group>"; };
 		D1DFB3731E8F57DF008CEE6A /* utf8.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = utf8.h; sourceTree = "<group>"; };
@@ -157,9 +157,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D1DB82E51E8BDF2A007D5EA8 /* libcrypto.1.0.0.dylib in Frameworks */,
-				D1DB82E61E8BDF2A007D5EA8 /* libetpan.20.dylib in Frameworks */,
-				D1DB82E71E8BDF2A007D5EA8 /* libssl.1.0.0.dylib in Frameworks */,
+				D1DB82E51E8BDF2A007D5EA8 /* libcrypto.a in Frameworks */,
+				D1DB82E61E8BDF2A007D5EA8 /* libetpan.a in Frameworks */,
+				D1DB82E71E8BDF2A007D5EA8 /* libssl.a in Frameworks */,
 				D13116C71A03B5B600DE1322 /* AppKit.framework in Frameworks */,
 				D175D9CD1A02E8DD0006B569 /* CoreGraphics.framework in Frameworks */,
 				D130064F12F02D9700702C0E /* Cocoa.framework in Frameworks */,
@@ -186,9 +186,9 @@
 		089C1671FE841209C02AAC07 /* External Frameworks and Libraries */ = {
 			isa = PBXGroup;
 			children = (
-				D1DB82E21E8BDF2A007D5EA8 /* libcrypto.1.0.0.dylib */,
-				D1DB82E31E8BDF2A007D5EA8 /* libetpan.20.dylib */,
-				D1DB82E41E8BDF2A007D5EA8 /* libssl.1.0.0.dylib */,
+				D1DB82E21E8BDF2A007D5EA8 /* libcrypto.a */,
+				D1DB82E31E8BDF2A007D5EA8 /* libetpan.a */,
+				D1DB82E41E8BDF2A007D5EA8 /* libssl.a */,
 				D13116C61A03B5B600DE1322 /* AppKit.framework */,
 				D175D9CC1A02E8DD0006B569 /* CoreGraphics.framework */,
 				D130064E12F02D9700702C0E /* Cocoa.framework */,
@@ -509,15 +509,21 @@
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = Info.plist;
 				INSTALL_PATH = "$(HOME)/Library/Bundles";
-				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS";
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/a";
 				LIBRARY_STYLE = Bundle;
 				OTHER_CFLAGS = "";
-				OTHER_LDFLAGS = "";
+				OTHER_LDFLAGS = (
+					"-lsasl2",
+					"-lz",
+					"-liconv",
+					"-framework",
+					Security,
+				);
 				OTHER_REZFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.4D.4DPlugin.etpan;
 				PRODUCT_NAME = etpan;
 				SECTORDER_FLAGS = "";
-				USER_HEADER_SEARCH_PATHS = include;
+				USER_HEADER_SEARCH_PATHS = include/mac;
 				WARNING_CFLAGS = (
 					"-Wmost",
 					"-Wno-four-char-constants",
@@ -547,15 +553,21 @@
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = Info.plist;
 				INSTALL_PATH = "$(HOME)/Library/Bundles";
-				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS";
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/a";
 				LIBRARY_STYLE = Bundle;
 				OTHER_CFLAGS = "";
-				OTHER_LDFLAGS = "";
+				OTHER_LDFLAGS = (
+					"-lsasl2",
+					"-lz",
+					"-liconv",
+					"-framework",
+					Security,
+				);
 				OTHER_REZFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.4D.4DPlugin.etpan;
 				PRODUCT_NAME = etpan;
 				SECTORDER_FLAGS = "";
-				USER_HEADER_SEARCH_PATHS = include;
+				USER_HEADER_SEARCH_PATHS = include/mac;
 				WARNING_CFLAGS = (
 					"-Wmost",
 					"-Wno-four-char-constants",
@@ -583,15 +595,21 @@
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = Info.plist;
 				INSTALL_PATH = "$(HOME)/Library/Bundles";
-				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/etpan.4dbase/Plugins/etpan.bundle/Contents/MacOS";
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/a";
 				LIBRARY_STYLE = Bundle;
 				OTHER_CFLAGS = "";
-				OTHER_LDFLAGS = "";
+				OTHER_LDFLAGS = (
+					"-lsasl2",
+					"-lz",
+					"-liconv",
+					"-framework",
+					Security,
+				);
 				OTHER_REZFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.4D.4DPlugin.etpan;
 				PRODUCT_NAME = etpan;
 				SECTORDER_FLAGS = "";
-				USER_HEADER_SEARCH_PATHS = include;
+				USER_HEADER_SEARCH_PATHS = include/mac;
 				WARNING_CFLAGS = (
 					"-Wmost",
 					"-Wno-four-char-constants",
@@ -630,7 +648,6 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LIBRARY_SEARCH_PATHS = (
-					/usr/local/lib,
 					cJSON,
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.5;
@@ -670,7 +687,6 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LIBRARY_SEARCH_PATHS = (
-					/usr/local/lib,
 					cJSON,
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.5;
@@ -710,7 +726,6 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LIBRARY_SEARCH_PATHS = (
-					/usr/local/lib,
 					cJSON,
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.5;
