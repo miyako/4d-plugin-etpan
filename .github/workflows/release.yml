@@ -315,7 +315,7 @@ jobs:
 
           # libetpan and OpenSSL are linked statically: only system libraries at run time
           otool -L "$BIN"
-          if otool -L "$BIN" | tail -n +2 | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
+          if otool -L "$BIN" | grep -v ":$" | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
             echo "::error::$BIN links a library outside the system"
             exit 1
           fi
