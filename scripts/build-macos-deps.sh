@@ -27,6 +27,20 @@ LIBETPAN_SHA=e02145e4fb755eae44b3acfdc8067b05bf7904ef
 unset CPATH LIBRARY_PATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH
 export PKG_CONFIG_LIBDIR=/nonexistent PKG_CONFIG_PATH=
 
+# run <log file> <command...>: keep the output in the log, show its end
+# (and configure's own log, when there is one) if the command fails
+run() {
+  local log="$1"; shift
+  if ! "$@" >"$log" 2>&1; then
+    echo "::error::$* failed, end of $log:" >&2
+    tail -n 60 "$log" >&2
+    for c in config.log ffbuild/config.log; do
+      [ -f "$c" ] && { echo "--- end of $(pwd)/$c:" >&2; tail -n 80 "$c" >&2; }
+    done
+    return 1
+  fi
+}
+
 # fetch <repo url> <commit sha or tag> <dir>
 fetch() {
   # skip only a completed checkout (a failed fetch leaves an empty repo behind)
@@ -59,7 +73,8 @@ build_arch() {
     x86_64) HOST=x86_64-apple-darwin;  TARGET=darwin64-x86_64-cc ;;
   esac
   local D="$WORK/$ARCH"
-  local FLAGS="-arch $ARCH -mmacosx-version-min=$MIN"
+  local SDK; SDK="$(xcrun --sdk macosx --show-sdk-path)"
+  local FLAGS="-arch $ARCH -mmacosx-version-min=$MIN -isysroot $SDK"
   mkdir -p "$D"
 
   # OpenSSL: static only, no config file outside the bundle is read
@@ -67,11 +82,11 @@ build_arch() {
     rm -rf "$D/openssl-build"
     rsync -a --exclude .git "$SRC/openssl/" "$D/openssl-build/"
     (cd "$D/openssl-build" &&
-      ./Configure "$TARGET" no-shared no-tests no-docs no-apps \
+      run "$D/openssl-configure.log" ./Configure "$TARGET" no-shared no-tests no-docs no-apps \
         --prefix="$D/openssl" --openssldir=/var/empty/ssl --libdir=lib \
         "-mmacosx-version-min=$MIN" &&
-      make -j"$JOBS" >/dev/null &&
-      make install_sw >/dev/null)
+      run "$D/openssl-make.log" make -j"$JOBS" &&
+      run "$D/openssl-install.log" make install_sw)
   fi
 
   # libetpan: static, OpenSSL above, system SASL/zlib/iconv
@@ -79,15 +94,15 @@ build_arch() {
     rm -rf "$D/libetpan-build"
     rsync -a --exclude .git "$SRC/libetpan/" "$D/libetpan-build/"
     (cd "$D/libetpan-build" &&
-      CC="$(xcrun -f clang)" CFLAGS="$FLAGS -O2" LDFLAGS="$FLAGS" \
+      run "$D/libetpan-configure.log" env CC=clang CFLAGS="$FLAGS -O2" LDFLAGS="$FLAGS" \
       ./configure --host="$HOST" --prefix="$D/libetpan" \
         --disable-shared --enable-static \
         --with-openssl="$D/openssl" --with-sasl=yes --without-gnutls \
-        --disable-db --with-curl=no --with-expat=no --disable-lockfile >/dev/null &&
+        --disable-db --with-curl=no --with-expat=no --disable-lockfile &&
       grep -q '^#define USE_SSL 1' config.h &&
       grep -q '^#define USE_SASL 1' config.h &&
-      make -j"$JOBS" >/dev/null &&
-      make install >/dev/null)
+      run "$D/libetpan-make.log" make -j"$JOBS" &&
+      run "$D/libetpan-install.log" make install)
   fi
 }
 
