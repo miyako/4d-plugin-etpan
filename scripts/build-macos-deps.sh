@@ -90,11 +90,12 @@ build_arch() {
   fi
 
   # libetpan: static, OpenSSL above, system SASL/zlib/iconv
+  # (-std=gnu17: md5.c has K&R function definitions, an error in C23)
   if [ ! -f "$D/libetpan/lib/libetpan.a" ]; then
     rm -rf "$D/libetpan-build"
     rsync -a --exclude .git "$SRC/libetpan/" "$D/libetpan-build/"
     (cd "$D/libetpan-build" &&
-      run "$D/libetpan-configure.log" env CC=clang CFLAGS="$FLAGS -O2" LDFLAGS="$FLAGS" \
+      run "$D/libetpan-configure.log" env CC=clang CFLAGS="$FLAGS -O2 -std=gnu17" LDFLAGS="$FLAGS" \
       ./configure --host="$HOST" --prefix="$D/libetpan" \
         --disable-shared --enable-static \
         --with-openssl="$D/openssl" --with-sasl=yes --without-gnutls \
