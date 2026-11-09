@@ -12,3 +12,6 @@ lib/windows64/
 include/mac/
 include/windows/
 build-deps.log
+
+# disposable offline test fixtures
+/tests/.helper-*/

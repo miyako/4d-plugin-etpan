@@ -353,6 +353,70 @@ The libraries are built from pinned sources by two scripts; their output is igno
 
 `.github/workflows/ci.yml` runs both scripts and builds the plugin, unsigned, on every push; `release.yml` does the same before signing. Both cache the libraries under the hash of the script, so changing a pinned version rebuilds them.
 
+### Independent Bump and Build
+
+The two release-related Actions are independent manual operations:
+
+- **Bump version** takes one required `mode` (`patch`, `minor`, or `major`, default `patch`). Select a branch with the built-in ref selector. It validates the selected immutable source, commits only version-source files as the Actions bot, and pushes one direct child to that same branch. It never tags, builds, publishes, or dispatches another workflow.
+- **Build** has no custom inputs. Select the desired ref; the selected immutable commit supplies the canonical `X.Y.Z` version. It builds Windows x64, then the universal macOS plugin, preserves resources, signs, notarizes, staples, and creates a new `vX.Y.Z` tag and release with ZIP and DMG assets. It does not increment source versions. There is no default-branch-only restriction.
+
+The coordinated source authority is the three project-level
+`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` settings in
+`etpan.xcodeproj/project.pbxproj` (Development, Deployment, Default),
+`Info.plist`'s required `CFBundleShortVersionString` (and `CFBundleVersion`
+only if present), and the version fields in the copied source
+`English.lproj/InfoPlist.strings`. Known Xcode version references are preserved.
+The original Bump header introduced in `8b84ad3e32d2cc66cdee500530391039ddd7ed95`
+explicitly coordinates marketing/build/plist versions; its marketing-only
+implementation left the build settings behind when
+`1b81b7977f009889fab154879d3793b4234a6c02` bumped to `1.1.0`.
+This migration keeps that existing `1.1.0` authority, aligns only stale
+coordinated source tokens, and leaves committed destination metadata untouched.
+Destination bundle plists/localizations are generated output, not authority.
+Build validates freshly built metadata, including compiled localization plists.
+
+Both operations fail closed on invalid, duplicated, unresolved, or drifting
+source metadata. Bump requires the committed executable pre-push guard before
+editing and immediately before pushing; the actual advertised old branch SHA
+must still equal the selected event SHA. It never force-pushes or follows tags.
+Every guard check requires the exact executable mode and raw hook blob committed
+at HEAD, so an executable replacement cannot bypass the final advertisement check.
+Build serializes publication across refs with a constant repository-wide
+concurrency group and `cancel-in-progress: false` (not a FIFO guarantee).
+Authenticated availability checks run before native work and again after all
+native/signing/notarization work. Existing tags or draft/published releases,
+including same-SHA collisions, abort rather than being reused.
+
+Publication uses separate create-only tag, release, and asset requests. Release
+notes remain empty, with generated notes disabled, matching the original
+release policy. A failure retains any created tag, release, or uploaded assets.
+**Manual recovery is required:** inspect the reported tag/release ID and
+partial assets, reconcile the state explicitly, and only then choose a new
+source version or deliberately remove the failed publication outside this
+workflow. Do not retry expecting overwrite, rollback, or automatic cleanup.
+
+Build requires an initially clean checkout, then preserves exact generated
+bytes at its final gate while independently checking immutable HEAD, index,
+and raw nongenerated source/configuration bytes. Unexpected untracked or
+ignored files and hidden index flags are rejected. No output is reset merely
+to make the worktree appear clean.
+Git's nested-repository directory markers are allowed only for the four
+dependency clones: `build/deps/src/{openssl,libetpan}` and
+`build/deps-win/{openssl,libetpan}`. These directories and their ancestors
+must not be symlinks; sibling or arbitrary directory markers are rejected.
+The only permitted generated symlink leaves are the proven libetpan build
+header and Libtool archive link families inside each architecture's dependency
+worktree, with validated regular targets confined to that same build root.
+Cached libraries, copied headers, and packaged outputs must remain regular files.
+
+Install the offline test dependency with
+`python3 -m pip install -r tests/requirements.txt`. Workflow regressions run with
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`;
+`actionlint .github/workflows/*.yml` checks all workflows. Native-command
+regressions use closed-PATH stubs, not real native or credential commands.
+The unrelated **CI** retains its original branch-push, pull-request, and manual
+triggers and therefore still performs real unsigned native builds on push/PR.
+
 ---
 
 ## Quick reference

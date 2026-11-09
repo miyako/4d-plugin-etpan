@@ -1,0 +1,96 @@
+"""Verify immutable Git bytes, independently of index flags and stat caches."""
+
+import hashlib
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+
+
+def run(*args, input=None, env=None):
+    return subprocess.run(args, input=input, env=env, text=True, check=True,
+                          stdout=subprocess.PIPE).stdout.rstrip("\n")
+
+
+def selected_sha(sha):
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("Expected immutable selected github.sha")
+    if run("git", "rev-parse", "HEAD") != sha:
+        raise ValueError("Checkout HEAD does not match selected SHA")
+
+
+def entries(output, *, index=False):
+    result = {}
+    for record in filter(None, output.split("\0")):
+        header, path = record.split("\t", 1)
+        if index:
+            mode, oid, stage = header.split()
+            if stage != "0":
+                raise ValueError("Unmerged index")
+        else:
+            mode, kind, oid = header.split()
+            if kind != "blob":
+                raise ValueError("Unsupported non-blob checkout entry")
+        if path in result:
+            raise ValueError("Duplicate checkout entry")
+        result[path] = (mode, oid)
+    return result
+
+
+def actual_blob(path):
+    path = Path(path)
+    if any(parent.is_symlink() for parent in path.parents):
+        raise ValueError(f"Tracked path has a symlink ancestor: {path}")
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode):
+        data = os.fsencode(os.readlink(path))
+        return "120000", hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"Expected regular tracked file: {path}")
+    digest = hashlib.sha1(b"blob " + str(path.stat().st_size).encode() + b"\0")
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return ("100755" if mode & 0o111 else "100644"), digest.hexdigest()
+
+
+def regular_output(path, *, directory=False, generated_symlink=lambda path: False):
+    raw_path, path = path, Path(path)
+    if any(parent.is_symlink() for parent in path.parents):
+        raise ValueError(f"Generated output must be a regular nonsymlink path: {path}")
+    mode = path.lstat().st_mode
+    if not directory and stat.S_ISLNK(mode) and generated_symlink(raw_path):
+        return
+    valid_type = stat.S_ISDIR if directory else stat.S_ISREG
+    if not valid_type(mode):
+        raise ValueError(f"Generated output must be a regular nonsymlink path: {path}")
+
+
+def verify_checkout(sha, *, generated=lambda path: False,
+                    generated_directory=lambda path: False,
+                    generated_symlink=lambda path: False, assets=(), final=False):
+    selected_sha(sha)
+    selected = entries(run("git", "ls-tree", "-r", "-z", sha, "--"))
+    indexed = entries(run("git", "ls-files", "--stage", "-z", "--"), index=True)
+    for row in filter(None, run("git", "ls-files", "-v", "-z", "--").split("\0")):
+        if row[0] != "H":
+            raise ValueError(f"Hidden or unsupported index flags: {row[2:]}")
+    for path in selected.keys() | indexed.keys():
+        if selected.get(path) != indexed.get(path):
+            raise ValueError(f"Index source/config differs from selected SHA: {path}")
+        if final and generated(path):
+            regular_output(path, generated_symlink=generated_symlink)
+            continue
+        try:
+            if actual_blob(path) != selected[path]:
+                raise ValueError(f"Working source/config differs from selected SHA: {path}")
+        except OSError as error:
+            raise ValueError(f"Working source/config missing or unreadable: {path}") from error
+    for path in filter(None, run("git", "ls-files", "--others", "-z", "--").split("\0")):
+        if not (final and (generated(path) or path in assets)):
+            raise ValueError("Untracked source/config or unexpected output in checkout")
+        regular_output(path, directory=generated_directory(path),
+                       generated_symlink=generated_symlink)
+    if not final and run("git", "status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("Preflight requires a completely clean source checkout")
