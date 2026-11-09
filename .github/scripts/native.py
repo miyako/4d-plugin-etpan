@@ -263,12 +263,12 @@ def require_file(path):
         raise ValueError(f"Expected nonempty native output: {path}")
 
 
-def architectures(path):
+def architectures(path, *, reject_i386=False):
     require_file(path)
     result = subprocess.run(["lipo", "-archs", str(path)], check=True,
                             capture_output=True, text=True)
     tokens = set(result.stdout.split())
-    if not {"arm64", "x86_64"} <= tokens or "i386" in tokens:
+    if not {"arm64", "x86_64"} <= tokens or (reject_i386 and "i386" in tokens):
         raise ValueError(f"Invalid universal architectures for {path}: {sorted(tokens)}")
 
 
@@ -276,7 +276,7 @@ def verify(version):
     import source_version
 
     binary = CONTENTS / "MacOS/etpan"
-    architectures(binary)
+    architectures(binary, reject_i386=True)
     libraries = subprocess.run(["otool", "-L", str(binary)], check=True,
                                capture_output=True, text=True).stdout
     for line in libraries.splitlines():

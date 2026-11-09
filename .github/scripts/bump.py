@@ -20,6 +20,11 @@ run = repository.run
 def require_guard():
     if HOOK.is_symlink() or not HOOK.is_file() or not os.access(HOOK, os.X_OK):
         raise ValueError("Mandatory executable advertised-SHA guard is missing")
+    relative = ".github/hooks/pre-push"
+    committed = repository.entries(run("git", "ls-tree", "-z", "HEAD", "--", relative))
+    expected = committed.get(relative)
+    if expected is None or expected[0] != "100755" or repository.actual_blob(HOOK) != expected:
+        raise ValueError("Mandatory guard must match its committed executable blob")
 
 
 def remote_ref(ref):

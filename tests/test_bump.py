@@ -1,8 +1,10 @@
 """Actual guarded CLI and local bare-Git advertisement races."""
 
 import os
+import json
 import shutil
 import subprocess
+import sys
 from unittest.mock import patch
 
 from helper_support import GitFixture, cwd, source
@@ -176,6 +178,94 @@ class BumpTests(GitFixture):
             self.assertEqual(reads, 2)
             self.assert_unchanged()
             self.git("reset", "--hard", self.sha)
+
+    def executable_replacement_cli(self, *, late):
+        tools = self.root / "git-tools"
+        tools.mkdir()
+        commands = self.root / "git-commands.jsonl"
+        reads = self.root / "remote-read-count"
+        wrapper = tools / "git"
+        wrapper.write_text(
+            f"#!{sys.executable}\n"
+            "import json,os,pathlib,subprocess,sys\n"
+            "args=sys.argv[1:]\n"
+            "with open(os.environ['COMMAND_LOG'],'a') as log:\n"
+            "    log.write(json.dumps(args)+'\\n')\n"
+            "result=subprocess.run([os.environ['REAL_GIT'],*args],check=False)\n"
+            "if args and args[0]=='ls-remote':\n"
+            "    counter=pathlib.Path(os.environ['REMOTE_READ_COUNT'])\n"
+            "    count=int(counter.read_text())+1 if counter.exists() else 1\n"
+            "    counter.write_text(str(count))\n"
+            "    if count==2 and os.environ['SWAP_LATE']=='1':\n"
+            "        hook=pathlib.Path(os.environ['HOOK_TO_SWAP'])\n"
+            "        hook.write_bytes(b'#!/bin/sh\\nexit 0\\n')\n"
+            "        hook.chmod(0o755)\n"
+            "sys.exit(result.returncode)\n"
+        )
+        wrapper.chmod(0o755)
+        env = {
+            **self.env, "PATH": str(tools) + os.pathsep + self.env["PATH"],
+            "REAL_GIT": shutil.which("git"), "COMMAND_LOG": str(commands),
+            "REMOTE_READ_COUNT": str(reads), "HOOK_TO_SWAP": str(self.hook),
+            "SWAP_LATE": "1" if late else "0",
+        }
+        before = {path: (self.local / path).read_bytes() for path in source.SOURCE_PATHS}
+        if not late:
+            self.hook.write_bytes(b"#!/bin/sh\nexit 0\n")
+            self.hook.chmod(0o755)
+        result = self.cli(".github/scripts/bump.py", "patch",
+                          "--sha", self.sha, "--ref", self.ref, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("committed executable blob", result.stderr)
+        calls = [json.loads(row) for row in commands.read_text().splitlines()]
+        self.assertFalse(any("push" in args for args in calls), calls)
+        self.assertEqual(self.hook.read_bytes(), b"#!/bin/sh\nexit 0\n")
+        self.assertTrue(os.access(self.hook, os.X_OK))
+        if late:
+            self.assertEqual(reads.read_text(), "2")
+            new = self.git("rev-parse", "HEAD")
+            self.assertNotEqual(new, self.sha)
+            self.assertEqual(self.git("rev-list", "--parents", "-n", "1", new),
+                             f"{new} {self.sha}")
+        else:
+            self.assertFalse(reads.exists())
+            self.assertEqual(self.git("rev-parse", "HEAD"), self.sha)
+            self.assertEqual(before, {path: (self.local / path).read_bytes() for path in before})
+        self.assert_unchanged()
+
+    def test_initial_executable_exit_zero_replacement_cli_is_zero_write_and_no_push(self):
+        self.executable_replacement_cli(late=False)
+
+    def test_late_executable_swap_after_second_real_remote_read_cli_never_pushes(self):
+        self.executable_replacement_cli(late=True)
+
+    def test_committed_hook_mode_and_missing_blob_are_rejected(self):
+        for missing in (False, True):
+            if missing:
+                self.git("update-index", "--force-remove", "--", ".github/hooks/pre-push")
+            else:
+                self.git("update-index", "--chmod=-x", "--", ".github/hooks/pre-push")
+            self.git("commit", "--quiet", "-m", "invalid committed guard fixture")
+            selected = self.git("rev-parse", "HEAD")
+            self.assertTrue(os.access(self.hook, os.X_OK))
+            result = self.cli(".github/scripts/bump.py", "patch",
+                              "--sha", selected, "--ref", self.ref)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("committed executable blob", result.stderr)
+            self.assert_unchanged()
+            self.git("reset", "--hard", self.sha)
+
+    def test_symlink_to_identical_executable_guard_is_rejected(self):
+        target = self.root / "identical-pre-push"
+        shutil.copy2(self.hook, target)
+        self.hook.unlink()
+        self.hook.symlink_to(target)
+        result = self.cli(".github/scripts/bump.py", "patch",
+                          "--sha", self.sha, "--ref", self.ref)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("executable", result.stderr)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.sha)
+        self.assert_unchanged()
 
     def prepare_child(self):
         result = self.cli(".github/scripts/source_version.py", "--bump", "patch")

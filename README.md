@@ -379,6 +379,8 @@ Both operations fail closed on invalid, duplicated, unresolved, or drifting
 source metadata. Bump requires the committed executable pre-push guard before
 editing and immediately before pushing; the actual advertised old branch SHA
 must still equal the selected event SHA. It never force-pushes or follows tags.
+Every guard check requires the exact executable mode and raw hook blob committed
+at HEAD, so an executable replacement cannot bypass the final advertisement check.
 Build serializes publication across refs with a constant repository-wide
 concurrency group and `cancel-in-progress: false` (not a FIFO guarantee).
 Authenticated availability checks run before native work and again after all

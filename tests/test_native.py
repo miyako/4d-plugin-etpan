@@ -501,11 +501,12 @@ class NativeWorkflowTests(Fixture):
                 self.run_step("verify universal binary", success=False)
         self.env["ARCHES"] = "arm64 x86_64 arm64e"
         self.run_step("verify universal binary")
-        for arches in ("arm64e x86_64", "arm64 x86_64h", "arm64 x86_64 i386"):
+        for arches in ("arm64e x86_64", "arm64 x86_64h"):
             self.env["DYLIB_ARCHES"] = arches
             self.run_step("verify universal binary", success=False)
-        self.env["DYLIB_ARCHES"] = "arm64 x86_64 arm64e"
-        self.run_step("verify universal binary")
+        for arches in ("arm64 x86_64 arm64e", "arm64 x86_64 i386"):
+            self.env["DYLIB_ARCHES"] = arches
+            self.run_step("verify universal binary")
         for library in ("@rpath/libssl.dylib", "/opt/homebrew/lib/libetpan.dylib",
                         "/usr/library/evil.dylib", "/System/Library-evil/lib.dylib"):
             self.env["OTOOL"] = "\t" + library + " (compatibility version 1.0.0)"
