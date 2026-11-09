@@ -29,6 +29,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -86,6 +88,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: restore prebuilt libraries
         id: deps-cache

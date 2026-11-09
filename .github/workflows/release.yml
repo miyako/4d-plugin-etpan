@@ -3,47 +3,38 @@
 # .bundle, codesigns + notarizes the mac binary, and publishes a GitHub
 # Release with the zip and dmg attached.
 #
-# Trigger: push a tag matching v*.*.* by hand. A tag pushed by
-# bump-version.yml with GITHUB_TOKEN does NOT start this workflow: after a
-# bump, run `gh workflow run release.yml -f tag=vX.Y.Z`.
-# You can also run it manually against an existing tag with workflow_dispatch.
+# Run manually at the selected immutable source SHA, with no inputs.
+# Source metadata determines the version; publication creates a new tag/release.
 #
-# PORTABILITY: edit only the env block below. Everything else is derived.
+# Native output paths and source metadata are project-specific in .github/scripts.
 # MACOS_DEPLOYMENT_TARGET must equal MACOSX_DEPLOYMENT_TARGET in the pbxproj.
 # Canonical layout enforced:
 #   <Product>.4dbase/Plugins/<Product>.bundle/Contents/MacOS/<Product>
 #   <Product>.4dbase/Plugins/<Product>.bundle/Contents/Windows64/<Product>.4DX
 #   <Product>.4dbase/Plugins/<Product>.bundle/Contents/Resources/manifest.json
 #
-# The macOS job never deletes the bundle: only the plugin binary and the
-# signature are rebuilt. Anything else committed in the bundle (Windows64/,
-# runtime dylibs in MacOS/, QuickLook/, ...) ships as committed. The runner's
+# The macOS job never deletes the bundle: only the executable, generated plist,
+# copied source localization and signature are rebuilt. The exact Windows64
+# executable is replaced by the Windows artifact; runtime dylibs, QuickLook
+# and other committed resources are retained. The runner's
 # file system is case-insensitive, so never `rm -rf .../plugins` (lower case):
 # that deletes .../Plugins too.
 
-name: Build & Release
+name: Build
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing tag to build (e.g. v2.3.0)
-        required: true
 
 permissions:
   contents: write
 
 env:
-  # ---- only this needs editing per-project ----
   PRODUCT_NAME: etpan
   MACOS_DEPLOYMENT_TARGET: '11.5'
-  # ---------------------------------------------
+  PYTHONDONTWRITEBYTECODE: '1'
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-publication
   cancel-in-progress: false
 
 jobs:
@@ -54,19 +45,18 @@ jobs:
       tag: ${{ steps.set.outputs.tag }}
       version: ${{ steps.set.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
       - id: set
+        name: read selected source and reject existing publication
         env:
-          RAW_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # trim whitespace from a hand-typed workflow_dispatch input (" v1.0.1")
-          TAG="$(echo "$RAW_TAG" | xargs)"
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Tag '${RAW_TAG}' is not of the form vX.Y.Z"
-            exit 1
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          python3 .github/scripts/release.py preflight --sha "$GITHUB_SHA"
 
   build-windows:
     name: Build Windows (x64)
@@ -75,7 +65,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: initial clean source and publication check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release.py preflight --sha "$GITHUB_SHA"
 
       - name: setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -109,11 +108,9 @@ jobs:
       - name: clean stale outputs
         shell: pwsh
         run: |
-          $product = "${{ env.PRODUCT_NAME }}"
-          $base = "${{ env.PRODUCT_NAME }}.4dbase"
-          Remove-Item -Force -ErrorAction SilentlyContinue "$base/Plugins/$product.bundle/Contents/Windows64/$product.4DX"
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$base/Plugins/Default"
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "Objs"
+          $ErrorActionPreference = 'Stop'
+          python3 .github/scripts/native.py prepare-windows
+          if ($LASTEXITCODE -ne 0) { throw "Windows output cleanup failed" }
 
       # GitHub-hosted windows-latest ships VS2022 (v143 toolset) but not the
       # legacy v140 toolset the project may be pinned to, so we override it on
@@ -129,21 +126,33 @@ jobs:
         run: |
           $product = "${{ env.PRODUCT_NAME }}"
           $base = "${{ env.PRODUCT_NAME }}.4dbase"
+          $ErrorActionPreference = 'Stop'
           $canonicalDir = "$base/Plugins/$product.bundle/Contents/Windows64"
+          # Exact Release|x64 OutDir from etpan.vcxproj.
+          $source = "$base/plugins/$product.bundle/contents/windows64/$product.4DX"
+          $destination = Join-Path $canonicalDir "$product.4DX"
+          foreach ($path in @($source, $destination)) {
+            $item = [System.IO.Path]::GetFullPath($path)
+            while ($item -and $item -ne [System.IO.Path]::GetPathRoot($item)) {
+              if (Test-Path -LiteralPath $item) {
+                if ((Get-Item -LiteralPath $item -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                  throw "Refusing symlink/reparse output: $item"
+                }
+              }
+              $item = Split-Path -Parent $item
+            }
+          }
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Windows binary missing at exact MSBuild output: $source"
+          }
+          if ((Get-Item -LiteralPath $source).Length -le 0) { throw "Empty Windows output: $source" }
           New-Item -ItemType Directory -Force -Path $canonicalDir | Out-Null
 
-          # msbuild may write to plugins\...\contents\windows64 (lower case, per the vcxproj)
-          $found = Get-ChildItem -Recurse -Filter "$product.4DX" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*Plugins*" } | Select-Object -First 1
-          if (-not $found) {
-            Get-ChildItem -Recurse -Filter "*.4DX" | ForEach-Object { Write-Host $_.FullName }
-            Write-Error "Windows binary $product.4DX not found after build"
-            exit 1
+          $sourceResolved = (Resolve-Path -LiteralPath $source).Path
+          $destResolved = $null
+          if (Test-Path -LiteralPath $destination) {
+            $destResolved = (Resolve-Path -LiteralPath $destination).Path
           }
-          Write-Host "Found at: $($found.FullName)"
-
-          $destination = Join-Path $canonicalDir "$product.4DX"
-          $sourceResolved = (Resolve-Path $found.FullName).Path
-          $destResolved = (Resolve-Path $destination -ErrorAction SilentlyContinue).Path
 
           if ($destResolved -and ($sourceResolved -ieq $destResolved)) {
             # Windows is case-insensitive: MSBuild's OutDir (lowercase, per
@@ -152,7 +161,7 @@ jobs:
             # "overwrite" a file with itself - there's nothing left to do.
             Write-Host "Already at canonical location (case-insensitive match) - skipping copy."
           } else {
-            Copy-Item $found.FullName $destination -Force
+            Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
           }
           Get-ChildItem $canonicalDir
 
@@ -170,7 +179,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: initial clean source and publication check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release.py preflight --sha "$GITHUB_SHA"
 
       # libetpan and OpenSSL are not committed: scripts/build-macos-deps.sh
       # builds them from pinned sources. The result is cached under the
@@ -206,14 +223,14 @@ jobs:
           # every a/... or lib/... file the Xcode project references must be
           # committed (a gitignored a/* makes the link fail with "no such file")
           MISSING=0
-          for f in $(grep -o 'path = "\{0,1\}\(a\|lib\)/[^";]*' "${{ env.PRODUCT_NAME }}.xcodeproj/project.pbxproj" | sed 's/^path = "\{0,1\}//' | sort -u); do
+          while IFS= read -r f; do
             if [ ! -e "$f" ]; then
               echo "::error::Missing prebuilt library $f"
               MISSING=1
             else
               echo "$f: $(lipo -archs "$f" 2>/dev/null || echo '?')"
             fi
-          done
+          done < <(grep -o 'path = "\{0,1\}\(a\|lib\)/[^";]*' "${{ env.PRODUCT_NAME }}.xcodeproj/project.pbxproj" | sed 's/^path = "\{0,1\}//' | sort -u)
           exit $MISSING
 
       - name: download windows binaries
@@ -249,6 +266,7 @@ jobs:
           TEAM_ID: ${{ secrets.NOTARYTOOL_TEAM_ID }}
           APP_PASSWORD: ${{ secrets.NOTARYTOOL_PASSWORD }}
         run: |
+          set -euo pipefail
           xcrun notarytool store-credentials "notarytool-profile" \
             --apple-id "$APPLE_ID" \
             --team-id "$TEAM_ID" \
@@ -263,15 +281,7 @@ jobs:
           XCODE_PROJECT="${PRODUCT}.xcodeproj"
           XCODE_TARGET="${PRODUCT}"
           PLUGINS_DIR="${BASE}/Plugins"
-          BUNDLE="${PLUGINS_DIR}/${PRODUCT}.bundle"
-
-          # remove only what the build produces, so a misdirected build fails
-          # at verify instead of shipping a stale committed binary
-          echo "Cleaning stale outputs to avoid /Default/ vs / bug"
-          rm -f "${BUNDLE:?}/Contents/MacOS/${PRODUCT:?}"
-          rm -rf "${BUNDLE:?}/Contents/_CodeSignature"
-          rm -rf "${PLUGINS_DIR:?}/Default"
-          rm -rf "${PLUGINS_DIR:?}/${PRODUCT:?}.build"
+          python3 .github/scripts/native.py prepare-macos
 
           echo "Building $XCODE_PROJECT target $XCODE_TARGET"
           xcodebuild -project "$XCODE_PROJECT" \
@@ -290,52 +300,7 @@ jobs:
       - name: verify universal binary
         run: |
           set -euo pipefail
-          PRODUCT="${{ env.PRODUCT_NAME }}"
-          BASE="${{ env.PRODUCT_NAME }}.4dbase"
-          CONTENTS="${BASE}/Plugins/${PRODUCT}.bundle/Contents"
-          BIN="${CONTENTS}/MacOS/${PRODUCT}"
-
-          if [ ! -f "$BIN" ]; then
-            echo "::error::Expected binary not found at $BIN - CONFIGURATION_BUILD_DIR mismatch?"
-            ls -R "$BASE"
-            exit 1
-          fi
-
-          echo "Timestamp check (must be recent):"
-          ls -lT "$BIN" || ls -l --time-style=full "$BIN"
-
-          # separate lines: under set -e a failure left of && is ignored
-          lipo -info "$BIN"
-          lipo -info "$BIN" | grep -q "arm64"
-          lipo -info "$BIN" | grep -q "x86_64"
-          if lipo -info "$BIN" | grep -q "i386"; then
-            echo "::error::i386 slice found - this is a stale binary, not the fresh build"
-            exit 1
-          fi
-
-          # libetpan and OpenSSL are linked statically: only system libraries at run time
-          otool -L "$BIN"
-          if otool -L "$BIN" | grep -v ":$" | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
-            echo "::error::$BIN links a library outside the system"
-            exit 1
-          fi
-
-          # runtime dylibs committed next to the binary must be universal too
-          for lib in "${CONTENTS}"/MacOS/*.dylib; do
-            [ -e "$lib" ] || continue
-            lipo -info "$lib"
-            lipo -info "$lib" | grep -q "arm64"
-            lipo -info "$lib" | grep -q "x86_64"
-          done
-
-          if [ ! -f "${CONTENTS}/Resources/manifest.json" ]; then
-            echo "::error::Missing ${CONTENTS}/Resources/manifest.json"
-            exit 1
-          fi
-          if [ -f constants.xlf ] && [ ! -f "${CONTENTS}/Resources/constants.xlf" ]; then
-            echo "::error::constants.xlf is not copied to ${CONTENTS}/Resources"
-            exit 1
-          fi
+          python3 .github/scripts/native.py verify --version "${{ needs.version.outputs.version }}"
 
       - name: merge Windows binaries into the bundle
         run: |
@@ -344,19 +309,7 @@ jobs:
           BASE="${{ env.PRODUCT_NAME }}.4dbase"
           BUNDLE="${BASE}/Plugins/${PRODUCT}.bundle"
 
-          mkdir -p "$BUNDLE/Contents/Windows64"
-
-          echo "winbuild contents:"
-          ls -R winbuild || true
-
-          SRC=$(find winbuild -name "${PRODUCT}.4DX" -type f | head -1)
-          if [ -z "$SRC" ]; then
-            echo "::error::Windows binary ${PRODUCT}.4DX not found in winbuild/"
-            exit 1
-          fi
-
-          echo "Copying $SRC -> $BUNDLE/Contents/Windows64/${PRODUCT}.4DX"
-          cp "$SRC" "$BUNDLE/Contents/Windows64/${PRODUCT}.4DX"
+          python3 .github/scripts/native.py merge-windows
 
           echo "BUNDLE_PATH=$BUNDLE" >> "$GITHUB_ENV"
           ls -R "$BUNDLE/Contents"
@@ -383,6 +336,8 @@ jobs:
           VERSION="${{ needs.version.outputs.version }}"
           ZIP_PATH="${PRODUCT}-${VERSION}.zip"
           DMG_PATH="${PRODUCT}-${VERSION}.dmg"
+          test ! -e "$ZIP_PATH"
+          test ! -e "$DMG_PATH"
 
           # zip: cross-platform bundle (win + mac binaries together), what most users grab
           echo "Creating $ZIP_PATH"
@@ -397,7 +352,7 @@ jobs:
           notarize() {
             local OUT ID STATUS
             OUT=$(xcrun notarytool submit "$1" --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" \
-              --wait --output-format json) || true
+              --wait --output-format json)
             echo "$OUT"
             ID=$(plutil -extract id raw -o - - <<< "$OUT" 2>/dev/null || true)
             STATUS=$(plutil -extract status raw -o - - <<< "$OUT" 2>/dev/null || true)
@@ -413,16 +368,15 @@ jobs:
           notarize "$ZIP_PATH"
           notarize "$DMG_PATH"
           xcrun stapler staple "$DMG_PATH"
+          codesign --verify --deep --strict --verbose=2 "$BUNDLE_PATH"
 
           echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
           echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
           ls -lh "$ZIP_PATH" "$DMG_PATH"
 
       - name: create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version.outputs.tag }}
-          name: ${{ needs.version.outputs.tag }}
-          files: |
-            ${{ env.ZIP_PATH }}
-            ${{ env.DMG_PATH }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release.py publish --sha "$GITHUB_SHA" "$ZIP_PATH" "$DMG_PATH"
