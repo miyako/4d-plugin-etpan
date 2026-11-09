@@ -149,3 +149,34 @@ class RepositoryTests(GitFixture):
         with self.assertRaisesRegex(ValueError, "regular nonsymlink"):
             self.verify(final=True, generated=native.generated,
                         generated_directory=native.dependency_repository)
+
+    def test_exact_generated_dependency_header_symlink_is_final_only_and_target_confined(self):
+        root = self.local / "build/deps/arm64/libetpan-build"
+        target = root / "src/low-level/imf/mailimf.h"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"synthetic pinned header target")
+        link = root / "include/libetpan/mailimf.h"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "Untracked"):
+            self.verify()
+        self.verify(final=True, generated=native.generated,
+                    generated_directory=native.dependency_repository,
+                    generated_symlink=native.generated_symlink)
+        self.assertEqual(link.read_bytes(), b"synthetic pinned header target")
+        self.assertTrue(link.is_symlink())
+        link.unlink()
+        link.symlink_to(self.local / source.PLIST)
+        with self.assertRaises(ValueError):
+            self.verify(final=True, generated=native.generated,
+                        generated_directory=native.dependency_repository,
+                        generated_symlink=native.generated_symlink)
+
+    def test_copied_cached_header_symlink_is_never_an_output_exemption(self):
+        link = self.local / "include/mac/libetpan/mailimf.h"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(self.local / source.PLIST)
+        with self.assertRaises(ValueError):
+            self.verify(final=True, generated=native.generated,
+                        generated_directory=native.dependency_repository,
+                        generated_symlink=native.generated_symlink)

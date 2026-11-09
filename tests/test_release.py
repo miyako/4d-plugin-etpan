@@ -1,6 +1,7 @@
 """Fail-closed API matrices and actual CLI publication against fake gh and real Git."""
 
 import json
+import os
 from pathlib import Path
 import plistlib
 import shutil
@@ -445,6 +446,95 @@ class PublicationCLITests(GitFixture):
                     moved.rename(target)
         for relative, raw in {**clones, **generated, **self.baseline}.items():
             self.assertEqual((self.local / relative).read_bytes(), raw)
+
+    def test_cli_libetpan_build_symlinks_retained_and_invalid_links_fail_before_api(self):
+        result = self.command("preflight")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.reset_api()
+        generated = self.build()
+        links, targets = {}, {}
+        for arch in ("arm64", "x86_64"):
+            root = self.local / f"build/deps/{arch}/libetpan-build"
+            for relative, raw in (
+                ("src/low-level/imf/mailimf.h", b"fresh pinned header\n"),
+                ("src/libetpan.la", b"fresh libtool archive metadata\n"),
+            ):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+                targets[str(target.relative_to(self.local))] = raw
+            for relative, destination in (
+                ("include/libetpan/mailimf.h", str(root / "src/low-level/imf/mailimf.h")),
+                ("src/.libs/libetpan.la", "../libetpan.la"),
+            ):
+                link = root / relative
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(destination)
+                links[str(link.relative_to(self.local))] = destination
+        result = self.command("publish")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call["method"] for call in self.calls()],
+                         ["GET", "GET", "POST", "GET", "POST", "POST", "POST"])
+
+        def retained():
+            for relative, destination in links.items():
+                link = self.local / relative
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), destination)
+            for relative, raw in {**targets, **generated, **self.baseline}.items():
+                self.assertEqual((self.local / relative).read_bytes(), raw)
+            self.assertEqual(self.git("rev-parse", "HEAD"), self.sha)
+
+        retained()
+        self.reset_api()
+        header_name = next(iter(links))
+        header = self.local / header_name
+        root = self.local / "build/deps/arm64/libetpan-build"
+        for invalid, destination in (
+            ("broken", str(root / "src/low-level/imf/missing.h")),
+            ("escape", str(self.local / "build/deps/x86_64/libetpan-build/src/low-level/imf/mailimf.h")),
+            ("cycle", str(header)),
+        ):
+            with self.subTest(invalid=invalid):
+                header.unlink()
+                header.symlink_to(destination)
+                try:
+                    self.assertNotEqual(self.command("publish").returncode, 0)
+                    self.assertEqual(self.calls(), [])
+                    self.assertTrue(header.is_symlink())
+                    self.assertEqual(os.readlink(header), destination)
+                finally:
+                    header.unlink()
+                    header.symlink_to(links[header_name])
+        target = root / "src/low-level/imf/mailimf.h"
+        for relative in (
+            "build/deps/arm64/libetpan-build-evil/include/libetpan/mailimf.h",
+            "build/deps/arm64/libetpan-build/config.log",
+            "include/mac/libetpan/mailimf.h",
+            "a/libetpan.a",
+        ):
+            with self.subTest(unexpected_symlink=relative):
+                link = self.local / relative
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(target)
+                try:
+                    self.assertNotEqual(self.command("publish").returncode, 0)
+                    self.assertEqual(self.calls(), [])
+                    self.assertEqual(os.readlink(link), str(target))
+                finally:
+                    link.unlink()
+        config = self.local / ".gitignore"
+        saved = self.root / "protected-config"
+        saved.write_bytes(self.baseline[".gitignore"])
+        config.unlink()
+        config.symlink_to(saved)
+        try:
+            self.assertNotEqual(self.command("publish").returncode, 0)
+            self.assertEqual(self.calls(), [])
+        finally:
+            config.unlink()
+            config.write_bytes(self.baseline[".gitignore"])
+        retained()
 
     def test_head_source_version_wrong_repo_and_explicit_auth_fail_before_api(self):
         self.build()

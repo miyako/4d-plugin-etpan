@@ -55,15 +55,21 @@ def actual_blob(path):
     return ("100755" if mode & 0o111 else "100644"), digest.hexdigest()
 
 
-def regular_output(path, *, directory=False):
-    path = Path(path)
+def regular_output(path, *, directory=False, generated_symlink=lambda path: False):
+    raw_path, path = path, Path(path)
+    if any(parent.is_symlink() for parent in path.parents):
+        raise ValueError(f"Generated output must be a regular nonsymlink path: {path}")
+    mode = path.lstat().st_mode
+    if not directory and stat.S_ISLNK(mode) and generated_symlink(raw_path):
+        return
     valid_type = stat.S_ISDIR if directory else stat.S_ISREG
-    if any(parent.is_symlink() for parent in path.parents) or not valid_type(path.lstat().st_mode):
+    if not valid_type(mode):
         raise ValueError(f"Generated output must be a regular nonsymlink path: {path}")
 
 
 def verify_checkout(sha, *, generated=lambda path: False,
-                    generated_directory=lambda path: False, assets=(), final=False):
+                    generated_directory=lambda path: False,
+                    generated_symlink=lambda path: False, assets=(), final=False):
     selected_sha(sha)
     selected = entries(run("git", "ls-tree", "-r", "-z", sha, "--"))
     indexed = entries(run("git", "ls-files", "--stage", "-z", "--"), index=True)
@@ -74,7 +80,7 @@ def verify_checkout(sha, *, generated=lambda path: False,
         if selected.get(path) != indexed.get(path):
             raise ValueError(f"Index source/config differs from selected SHA: {path}")
         if final and generated(path):
-            regular_output(path)
+            regular_output(path, generated_symlink=generated_symlink)
             continue
         try:
             if actual_blob(path) != selected[path]:
@@ -84,6 +90,7 @@ def verify_checkout(sha, *, generated=lambda path: False,
     for path in filter(None, run("git", "ls-files", "--others", "-z", "--").split("\0")):
         if not (final and (generated(path) or path in assets)):
             raise ValueError("Untracked source/config or unexpected output in checkout")
-        regular_output(path, directory=generated_directory(path))
+        regular_output(path, directory=generated_directory(path),
+                       generated_symlink=generated_symlink)
     if not final and run("git", "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("Preflight requires a completely clean source checkout")

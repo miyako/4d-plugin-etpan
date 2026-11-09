@@ -144,6 +144,7 @@ def context(sha, *, final=False):
     version = source_version.read()
     repository.verify_checkout(sha, generated=native.generated,
                                generated_directory=native.dependency_repository,
+                               generated_symlink=native.generated_symlink,
                                assets=asset_names(version), final=final)
     if final:
         source_version.verify_bundle(native.BUNDLE)

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import yaml
 
 from helper_support import Fixture, ROOT, cwd, original, source
 import native
+import release as release_helper
 
 
 WORKFLOW = ROOT / ".github/workflows/release.yml"
@@ -209,6 +211,153 @@ class NativePreparationTests(Fixture):
                                         cwd=self.root, env=env).decode().split("\0")
         self.assertIn("build/deps/src/libetpan/", paths)
         self.assertTrue(all(native.generated(path) for path in paths if path))
+
+
+class NativeDependencySymlinkTests(Fixture):
+    def link(self, entry=Path("include/libetpan/mail.h"), build_root=None):
+        build_root = build_root or native.LIBETPAN_BUILD_ROOTS[0]
+        target_relative, absolute = native.LIBETPAN_SYMLINKS[entry]
+        target = self.write(build_root / target_relative, b"immutable dependency fixture")
+        leaf = self.root / build_root / entry
+        leaf.parent.mkdir(parents=True, exist_ok=True)
+        raw = str(target) if absolute else "../" + target.name
+        leaf.symlink_to(raw)
+        return leaf, target
+
+    def accepted(self, leaf):
+        with cwd(self.root):
+            return native.generated_symlink(leaf.relative_to(self.root).as_posix())
+
+    def rejected(self, leaf):
+        with self.assertRaises((ValueError, OSError, RuntimeError)):
+            self.accepted(leaf)
+
+    def test_every_enumerated_header_and_libtool_link_for_both_architectures(self):
+        headers = [entry for entry, (_, absolute) in native.LIBETPAN_SYMLINKS.items() if absolute]
+        archives = [entry for entry, (_, absolute) in native.LIBETPAN_SYMLINKS.items() if not absolute]
+        self.assertEqual(len(headers), 164)
+        self.assertEqual(len(archives), 30)
+        self.assertEqual(len(native.LIBETPAN_BUILD_ROOTS), 2)
+        for build_root in native.LIBETPAN_BUILD_ROOTS:
+            for entry in native.LIBETPAN_SYMLINKS:
+                with self.subTest(root=build_root, entry=entry):
+                    leaf, target = self.link(entry, build_root)
+                    original = (os.readlink(leaf), target.read_bytes())
+                    self.assertTrue(self.accepted(leaf))
+                    self.assertTrue(native.generated(str(build_root / entry)))
+                    self.assertEqual((os.readlink(leaf), target.read_bytes()), original)
+
+    def test_regular_and_missing_known_paths_are_not_symlink_exemptions(self):
+        path = native.LIBETPAN_BUILD_ROOTS[0] / "include/libetpan/mail.h"
+        with cwd(self.root):
+            self.assertFalse(native.generated_symlink(str(path)))
+        regular = self.write(path, b"ordinary output")
+        self.assertFalse(self.accepted(regular))
+
+    def test_unknown_cached_bundle_source_and_injected_link_paths_never_exempt(self):
+        target = self.write("ordinary-target", b"keep")
+        root = native.LIBETPAN_BUILD_ROOTS[0]
+        paths = (
+            root / "include/libetpan/injected.h",
+            root / "include/libetpan/config.h",
+            root / "include/libetpan/mail.h.backup",
+            root / "include/libetpan/MAIL.h",
+            root / "src/.libs/injected.la",
+            root / "src/.libs/libetpan-no-mt.la",
+            root / "src/windows/.libs/libarch.la",
+            root / "src/unlisted/.libs/libetpan.la",
+            root / "Info.plist",
+            Path("build/deps/arm64e/libetpan-build/include/libetpan/mail.h"),
+            Path("build/deps/arm64/openssl-build/include/libetpan/mail.h"),
+            Path("build/deps-win/libetpan/include/libetpan/mail.h"),
+            Path("a/libetpan.a"), Path("lib/windows64/libetpan.lib"),
+            Path("include/mac/libetpan/mail.h"), Path("include/windows/libetpan/mail.h"),
+            CONTENTS / "MacOS/etpan", CONTENTS / "Info.plist",
+            CONTENTS / "_CodeSignature/CodeResources",
+            Path("winbuild/etpan.4DX"), Path("Info.plist"), Path("etpan-1.1.0.zip"),
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                leaf = self.root / path
+                leaf.parent.mkdir(parents=True, exist_ok=True)
+                leaf.symlink_to(target)
+                self.assertFalse(self.accepted(leaf))
+        value = str(root / "include/libetpan/mail.h")
+        for malformed in ("/" + value, "../" + value, value + "/", value.replace("/", "//"),
+                          value.replace("/", "\\"), str(root / "src/../include/libetpan/mail.h")):
+            with cwd(self.root), self.subTest(path=malformed):
+                self.assertFalse(native.generated_symlink(malformed))
+        self.assertEqual(target.read_bytes(), b"keep")
+
+    def test_header_requires_exact_absolute_source_not_alias_or_sibling(self):
+        leaf, target = self.link()
+        sibling = self.write(native.LIBETPAN_BUILD_ROOTS[1] / "src/data-types/mail.h", b"sibling")
+        injected = self.write(native.LIBETPAN_BUILD_ROOTS[0] / "src/injected/mail.h", b"injected")
+        source = self.write("Info.plist", b"protected source")
+        targets = (
+            os.path.relpath(target, leaf.parent), str(sibling), str(injected), str(source),
+            str(target.parent / "." / target.name) + "/..",
+            str(target.parent) + "/./" + target.name,
+            str(target.parent) + "/../data-types/" + target.name,
+            str(leaf), str(self.root / "outside/missing.h"),
+        )
+        for raw in targets:
+            with self.subTest(raw=raw):
+                leaf.unlink()
+                leaf.symlink_to(raw)
+                self.rejected(leaf)
+        self.assertEqual(source.read_bytes(), b"protected source")
+        self.assertEqual(sibling.read_bytes(), b"sibling")
+
+    def test_libtool_requires_exact_relative_parent_target(self):
+        leaf, target = self.link(Path("src/.libs/libetpan.la"))
+        for raw in (str(target), "./../libetpan.la", ".././libetpan.la",
+                    "../../src/libetpan.la", "../libother.la", "../libetpan.la/anything",
+                    "../../../../../Info.plist", "..\\libetpan.la"):
+            with self.subTest(raw=raw):
+                leaf.unlink()
+                leaf.symlink_to(raw)
+                self.rejected(leaf)
+
+    def test_leaf_and_target_ancestors_must_not_be_symlinks(self):
+        leaf, _target = self.link()
+        root = native.LIBETPAN_BUILD_ROOTS[0]
+        ancestors = (
+            Path("build"), Path("build/deps"), Path("build/deps/arm64"), root,
+            root / "include", root / "include/libetpan", root / "src", root / "src/data-types",
+        )
+        for path in ancestors:
+            with self.subTest(ancestor=path):
+                ancestor = self.root / path
+                moved = ancestor.with_name(ancestor.name + "-real")
+                ancestor.rename(moved)
+                ancestor.symlink_to(moved, target_is_directory=True)
+                try:
+                    self.rejected(leaf)
+                finally:
+                    ancestor.unlink()
+                    moved.rename(ancestor)
+        self.assertTrue(self.accepted(leaf))
+
+    def test_broken_chained_cyclic_directory_and_fifo_targets_are_rejected(self):
+        leaf, target = self.link()
+        other = self.write(native.LIBETPAN_BUILD_ROOTS[0] / "src/data-types/other.h", b"keep")
+        target.unlink()
+        self.rejected(leaf)
+        for raw in (str(other), str(leaf), str(target)):
+            with self.subTest(target=raw):
+                target.symlink_to(raw)
+                self.rejected(leaf)
+                target.unlink()
+        target.mkdir()
+        self.rejected(leaf)
+        target.rmdir()
+        os.mkfifo(target)
+        self.rejected(leaf)
+        target.unlink()
+        target.write_bytes(b"restored regular target")
+        self.assertTrue(self.accepted(leaf))
+        self.assertEqual(other.read_bytes(), b"keep")
 
 
 class NativeWorkflowTests(Fixture):
@@ -491,7 +640,43 @@ function Copy-Item { throw "offline copy failure" }
         self.assertEqual(target.read_bytes(), b"keep")
 
 
-class NativeContractTests(unittest.TestCase):
+class NativeContractTests(Fixture):
+    def test_every_workflow_release_call_uses_actual_parser_and_initial_preflight(self):
+        workflow = yaml.load(WORKFLOW.read_bytes(), Loader=yaml.BaseLoader)
+        version = source.read(ROOT)
+        values = {
+            "$GITHUB_SHA": "a" * 40,
+            "$ZIP_PATH": f"etpan-{version}.zip",
+            "$DMG_PATH": f"etpan-{version}.dmg",
+        }
+        calls = []
+        for job_name, job in workflow["jobs"].items():
+            commands = []
+            for step in job["steps"]:
+                for line in step.get("run", "").splitlines():
+                    if "python3 .github/scripts/release.py " not in line:
+                        continue
+                    tokens = shlex.split(line)
+                    self.assertEqual(tokens[:2], ["python3", ".github/scripts/release.py"])
+                    commands.append([values.get(token, token) for token in tokens[2:]])
+            self.assertTrue(commands, job_name)
+            self.assertEqual(commands[0], ["preflight", "--sha", "a" * 40], job_name)
+            calls.extend(commands)
+        with mock.patch.object(release_helper, "preflight",
+                               return_value=(version, "v" + version)) as preflight, \
+                mock.patch.object(release_helper, "check") as final_check, \
+                mock.patch.object(release_helper, "publish") as publish, \
+                mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(self.root / "output")}):
+            for args in calls:
+                release_helper.main(args)
+        self.assertEqual(preflight.call_args_list, [mock.call("a" * 40)] * 3)
+        final_check.assert_not_called()
+        publish.assert_called_once_with("a" * 40,
+                                        [f"etpan-{version}.zip", f"etpan-{version}.dmg"])
+        self.assertEqual(calls[-1],
+                         ["publish", "--sha", "a" * 40,
+                          f"etpan-{version}.zip", f"etpan-{version}.dmg"])
+
     def test_manual_immutable_cross_ref_workflow(self):
         workflow = yaml.load(WORKFLOW.read_bytes(), Loader=yaml.BaseLoader)
         self.assertEqual(workflow["name"], "Build")
