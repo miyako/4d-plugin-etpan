@@ -387,6 +387,65 @@ class PublicationCLITests(GitFixture):
                     target.write_bytes(self.baseline[path])
                     self.git("add", "--", path)
 
+    def test_cli_nested_dependency_repositories_retained_and_sibling_symlinks_fail_before_api(self):
+        self.assertEqual(self.command("preflight").returncode, 0)
+        self.reset_api()
+        seed = self.root / "dependency-source"
+        self.git("init", "--quiet", str(seed))
+        (seed / "dependency.c").write_bytes(b"offline dependency source\n")
+        self.git("-C", str(seed), "add", "dependency.c")
+        self.git("-C", str(seed), "-c", "user.name=Offline Fixture",
+                 "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                 "commit", "--quiet", "-m", "offline dependency fixture")
+        paths = tuple(map(str, native.DEPENDENCY_REPOSITORIES))
+        self.assertEqual(set(paths), {
+            "build/deps/src/openssl", "build/deps/src/libetpan",
+            "build/deps-win/openssl", "build/deps-win/libetpan",
+        })
+        for relative in paths:
+            target = self.local / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            self.git("clone", "--quiet", "--no-hardlinks", str(seed), str(target))
+            self.assertEqual(self.git("check-ignore", "--", relative + "/dependency.c"),
+                             relative + "/dependency.c")
+        markers = set(filter(None, self.git("ls-files", "--others", "-z", "--").split("\0")))
+        self.assertEqual(markers, {relative + "/" for relative in paths})
+        clones = {str(path.relative_to(self.local)): path.read_bytes()
+                  for relative in paths for path in (self.local / relative).rglob("*")
+                  if path.is_file()}
+        self.assertNotEqual(self.command("preflight").returncode, 0)
+        self.assertEqual(self.calls(), [])
+        generated = self.build()
+        result = self.command("publish")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call["method"] for call in self.calls()],
+                         ["GET", "GET", "POST", "GET", "POST", "POST", "POST"])
+        for relative, raw in {**clones, **generated, **self.baseline}.items():
+            self.assertEqual((self.local / relative).read_bytes(), raw)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.sha)
+        self.reset_api()
+        sibling = self.local / (paths[0] + "-evil")
+        self.git("clone", "--quiet", "--no-hardlinks", str(seed), str(sibling))
+        self.assertIn(paths[0] + "-evil/",
+                      self.git("ls-files", "--others", "-z", "--").split("\0"))
+        self.assertNotEqual(self.command("publish").returncode, 0)
+        self.assertEqual(self.calls(), [])
+        shutil.rmtree(sibling)
+        for index, relative in enumerate(paths):
+            with self.subTest(symlink=relative):
+                target = self.local / relative
+                moved = self.root / f"redirected-dependency-{index}"
+                target.rename(moved)
+                target.symlink_to(moved, target_is_directory=True)
+                try:
+                    self.assertNotEqual(self.command("publish").returncode, 0)
+                    self.assertEqual(self.calls(), [])
+                finally:
+                    target.unlink()
+                    moved.rename(target)
+        for relative, raw in {**clones, **generated, **self.baseline}.items():
+            self.assertEqual((self.local / relative).read_bytes(), raw)
+
     def test_head_source_version_wrong_repo_and_explicit_auth_fail_before_api(self):
         self.build()
         for env in ({"GH_TOKEN": ""}, {"GH_TOKEN": " ", "GITHUB_TOKEN": "ambient-token"},

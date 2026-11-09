@@ -24,6 +24,8 @@ MAC_DIRECTORIES = (
     PLUGINS / "etpan.build",
     PLUGINS / "Default/etpan.build",
 )
+FILES = MAC_FILES
+DIRECTORIES = MAC_DIRECTORIES
 XC_DATABASES = tuple(Path("build/XCBuildData") / name for name in (
     "build.db", "build.db-wal", "build.db-shm",
 ))
@@ -36,11 +38,22 @@ DEPENDENCY_DIRECTORIES = (
     Path("include/mac/libetpan"), Path("include/windows/libetpan"),
     Path("build/deps"), Path("build/deps-win"),
 )
+DEPENDENCY_REPOSITORIES = tuple(map(Path, (
+    "build/deps/src/openssl", "build/deps/src/libetpan",
+    "build/deps-win/openssl", "build/deps-win/libetpan",
+)))
+
+
+def dependency_repository(path):
+    """Git reports these nested dependency checkouts as directory markers."""
+    return str(path) in {str(directory) + "/" for directory in DEPENDENCY_REPOSITORIES}
 
 
 def generated(path):
     """Publication exclusions are scoped to this project, not all of build/."""
     value = str(path)
+    if dependency_repository(value):
+        return True
     if "\\" in value or PurePosixPath(value).as_posix() != value:
         return False
     parts = PurePosixPath(value).parts

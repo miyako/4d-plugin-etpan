@@ -398,6 +398,10 @@ bytes at its final gate while independently checking immutable HEAD, index,
 and raw nongenerated source/configuration bytes. Unexpected untracked or
 ignored files and hidden index flags are rejected. No output is reset merely
 to make the worktree appear clean.
+Git's nested-repository directory markers are allowed only for the four
+dependency clones: `build/deps/src/{openssl,libetpan}` and
+`build/deps-win/{openssl,libetpan}`. These directories and their ancestors
+must not be symlinks; sibling or arbitrary directory markers are rejected.
 
 Install the offline test dependency with
 `python3 -m pip install -r tests/requirements.txt`. Workflow regressions run with

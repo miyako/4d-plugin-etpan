@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from helper_support import GitFixture, cwd, source
 import repository
+import native
 
 
 class RepositoryTests(GitFixture):
@@ -108,3 +109,43 @@ class RepositoryTests(GitFixture):
         output.symlink_to(self.local / source.PLIST)
         with self.assertRaisesRegex(ValueError, "regular nonsymlink"):
             self.verify(final=True, generated=lambda path: path == "generated-output")
+
+    def nested_dependency(self, relative):
+        path = self.local / relative
+        path.mkdir(parents=True)
+        self.git("-C", str(path), "init", "--quiet")
+        self.git("-C", str(path), "-c", "user.name=Offline Fixture",
+                 "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                 "commit", "--quiet", "--allow-empty", "-m", "nested dependency fixture")
+        return path
+
+    def test_exact_nested_dependency_markers_are_final_only_and_siblings_fail(self):
+        (self.local / ".gitignore").write_text("build/\n")
+        self.git("add", ".gitignore")
+        self.git("commit", "--quiet", "-m", "ignored build fixture")
+        self.sha = self.git("rev-parse", "HEAD")
+        paths = (
+            "build/deps/src/openssl", "build/deps/src/libetpan",
+            "build/deps-win/openssl", "build/deps-win/libetpan",
+        )
+        for path in paths:
+            self.nested_dependency(path)
+        markers = self.git("ls-files", "--others", "-z", "--").split("\0")
+        self.assertEqual(set(filter(None, markers)), {path + "/" for path in paths})
+        with self.assertRaisesRegex(ValueError, "Untracked"):
+            self.verify()
+        self.verify(final=True, generated=native.generated,
+                    generated_directory=native.dependency_repository)
+        self.nested_dependency("build/deps/src/libetpan-evil")
+        with self.assertRaisesRegex(ValueError, "Untracked|regular nonsymlink"):
+            self.verify(final=True, generated=native.generated,
+                        generated_directory=native.dependency_repository)
+
+    def test_exact_dependency_directory_symlink_is_not_an_allowed_marker(self):
+        path = self.nested_dependency("build/deps/src/libetpan")
+        target = self.root / "redirected-dependency"
+        path.rename(target)
+        path.symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "regular nonsymlink"):
+            self.verify(final=True, generated=native.generated,
+                        generated_directory=native.dependency_repository)

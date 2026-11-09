@@ -173,6 +173,9 @@ class NativePreparationTests(Fixture):
                Path("build/XCBuildData/" + "a" * 32 + ".xcbuilddata/manifest.json"))
         for path in yes:
             self.assertTrue(native.generated(str(path)), path)
+        for path in native.DEPENDENCY_REPOSITORIES:
+            self.assertTrue(native.generated(str(path) + "/"), path)
+            self.assertTrue(native.dependency_repository(str(path) + "/"), path)
         for path in (
             *map(str, source.SOURCE_PATHS), "build/source.cpp", "a/unexpected.a",
             "winbuild/nested/etpan.4DX", "build/XCBuildData/build.db-evil",
@@ -181,8 +184,31 @@ class NativePreparationTests(Fixture):
             str(CONTENTS / "MacOS/runtime.dylib"), str(CONTENTS / "Resources/manifest.json"),
             str(CONTENTS / "QuickLook/Thumbnail.png"), "../build/deps/escape",
             "build/deps/../source", "/build/deps/file", "build\\deps\\file",
+            "build/deps/src/unexpected/", "build/deps/src/openssl//",
+            "build/deps/src/openssl/../source/",
+            "etpan-1.1.0.zip", "etpan-1.1.0.dmg", "other-1.1.0.zip",
         ):
             self.assertFalse(native.generated(path), path)
+
+    def test_actual_git_nested_dependency_directory_marker(self):
+        repository = self.root / "build/deps/src/libetpan"
+        repository.mkdir(parents=True)
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
+               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        for path in (self.root, repository):
+            subprocess.run(["git", "init", "-q", "--template=", str(path)], env=env, check=True)
+        (repository / "source.c").write_bytes(b"offline dependency source")
+        subprocess.run(["git", "add", "source.c"], cwd=repository, env=env, check=True)
+        subprocess.run(["git", "-c", "user.name=Offline Fixture",
+                        "-c", "user.email=offline@example.invalid", "-c", "commit.gpgsign=false",
+                        "commit", "-qm", "offline dependency fixture", "-m",
+                        "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"],
+                       cwd=repository,
+                       env=env, check=True)
+        paths = subprocess.check_output(["git", "ls-files", "--others", "-z", "--"],
+                                        cwd=self.root, env=env).decode().split("\0")
+        self.assertIn("build/deps/src/libetpan/", paths)
+        self.assertTrue(all(native.generated(path) for path in paths if path))
 
 
 class NativeWorkflowTests(Fixture):
