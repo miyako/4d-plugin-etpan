@@ -353,6 +353,26 @@ The libraries are built from pinned sources by two scripts; their output is igno
 
 `.github/workflows/ci.yml` runs both scripts and builds the plugin, unsigned, on every push; `release.yml` does the same before signing. Both cache the libraries under the hash of the script, so changing a pinned version rebuilds them.
 
+### SDK string ownership regression
+
+The bundled SDK's `PA_SetStringVariable` transfers a string allocation into
+the variable without copying or clearing its previous value. The picture
+wrappers therefore initialize string arguments as `eVK_Undefined` and clear
+each owning variable once after the synchronous command returns; they must
+not also dispose the original string alias. This fixes a dormant file-loading
+wrapper double-dispose and overwritten empty-string allocations in file loading
+and picture copying. These wrappers are not used by the exposed SMTP command;
+no command or signature has been added.
+
+On macOS, run
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_string_ownership.py -v`.
+This compiles the real picture wrappers and bundled SDK against a host shim,
+checks argument reads during synchronous commands and repeated cleanup, and
+requires no libetpan/OpenSSL build, signing, or network access. CI runs it before
+the macOS dependency build. The shim verifies string ownership, not actual image
+conversion or 4D host behavior; Windows and real 4D runtime validation remain
+separate.
+
 ### Independent Bump and Build
 
 The two release-related Actions are independent manual operations:
