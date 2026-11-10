@@ -91,6 +91,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      - name: check SDK string ownership
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_string_ownership.py -v
+
       - name: restore prebuilt libraries
         id: deps-cache
         uses: actions/cache/restore@v4

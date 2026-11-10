@@ -123,15 +123,13 @@ void CPicture::fromFileAtPath(CUTF8String *pFilePath)
 	PA_Unistring _path = PA_CreateUnistring((PA_Unichar *)filePath.getUTF16StringPtr());
 	
 	PA_Variable args[2];
-	args[0] = PA_CreateVariable(eVK_Unistring);
+	args[0] = PA_CreateVariable(eVK_Undefined);
 	PA_SetStringVariable(&args[0], &_path);
 	args[1] = PA_CreateVariable(eVK_Picture);
 	
 	PA_ExecuteCommandByID(678, args, 2);
 	
 	PA_Picture p = PA_GetPictureVariable(args[1]);
-	
-	PA_DisposeUnistring(&_path);
 	
 	PA_ClearVariable(&args[0]);
 	
@@ -257,7 +255,7 @@ PA_Picture CPicture::createCopy(const char* type)
     PA_Variable args[2];
     args[0] = PA_CreateVariable(eVK_Picture);
     PA_SetPictureVariable(&args[0], p);
-    args[1] = PA_CreateVariable(eVK_Unistring);
+    args[1] = PA_CreateVariable(eVK_Undefined);
     
     PA_SetStringVariable(&args[1], &u);
     PA_ExecuteCommandByID(CMU_CONVERT_PICTURE, args, 2);

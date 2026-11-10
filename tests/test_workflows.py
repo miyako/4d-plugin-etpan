@@ -37,12 +37,17 @@ class WorkflowTests(unittest.TestCase):
                         count += 1
         self.assertEqual(count, 6)
 
-    def test_unrelated_native_ci_preserved_except_immutable_checkout(self):
+    def test_native_ci_preserved_with_immutable_checkout_and_ownership_check(self):
         old = yaml.safe_load(original(".github/workflows/ci.yml"))
         for job in old["jobs"].values():
             for step in job["steps"]:
                 if step.get("uses", "").startswith("actions/checkout@"):
                     step["with"] = {"ref": "${{ github.sha }}"}
+        old["jobs"]["build-macos"]["steps"].insert(1, {
+            "name": "check SDK string ownership",
+            "run": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover "
+                   "-s tests -p test_string_ownership.py -v",
+        })
         self.assertEqual(self.workflow("ci.yml"), old)
 
     def test_constant_cross_ref_publication_lock_without_invented_branch_gate(self):
