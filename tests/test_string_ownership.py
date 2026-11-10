@@ -1,4 +1,4 @@
-"""Exercise real picture wrappers and bundled SDK against a string-owning host."""
+"""Exercise real picture wrappers and SDK with sanitized string/charset checks."""
 
 from pathlib import Path
 import subprocess
@@ -20,6 +20,8 @@ class StringOwnershipTests(unittest.TestCase):
         sdk = ROOT / "4D Plugin API"
         command = [
             "xcrun", "clang++", "-std=c++11", "-x", "objective-c++",
+            "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+            "-fno-sanitize-recover=all",
             "-include", "Carbon/Carbon.h",
             "-Wno-deprecated-declarations", "-Wno-return-type-c-linkage",
             "-I", str(sdk), "-I", str(sdk / "Classes"),
@@ -43,6 +45,21 @@ class StringOwnershipTests(unittest.TestCase):
 
     def test_copy_format_has_one_owner(self):
         self.run_case("copy")
+
+    def test_jpg_format(self):
+        self.run_case("copy-jpg")
+
+    def test_tif_format(self):
+        self.run_case("copy-tif")
+
+    def test_empty_format(self):
+        self.run_case("copy-empty")
+
+    def test_bmp_format(self):
+        self.run_case("copy-bmp")
+
+    def test_supplementary_format(self):
+        self.run_case("copy-supplementary")
 
 
 if __name__ == "__main__":
