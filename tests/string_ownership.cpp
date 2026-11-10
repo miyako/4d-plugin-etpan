@@ -28,19 +28,21 @@ static PA_Unistring createString(const PA_Unichar* input)
     CUTF16String value(input);
     PA_Unistring result = {};
     result.fLength = static_cast<PA_long32>(value.size());
-    result.fString = new PA_Unichar[value.size() + 1];
-    std::copy(value.begin(), value.end(), result.fString);
-    result.fString[value.size()] = 0;
-    strings.insert(result.fString);
+    PA_Unichar* buffer = new PA_Unichar[value.size() + 1];
+    std::copy(value.begin(), value.end(), buffer);
+    buffer[value.size()] = 0;
+    strings.insert(buffer);
+    result.fString = buffer;
     return result;
 }
 
 static void disposeString(PA_Unistring value)
 {
-    if (value.fString)
+    PA_Unichar* buffer = value.fString;
+    if (buffer)
     {
-        require(strings.erase(value.fString) == 1, "string disposed twice or not owned");
-        delete[] value.fString;
+        require(strings.erase(buffer) == 1, "string disposed twice or not owned");
+        delete[] buffer;
     }
 }
 
@@ -69,21 +71,24 @@ static void host(short selector, EngineBlock* eb)
             break;
         }
         case EX_HANDLE_MANAGER:
+        {
+            PA_Handle handle = eb->fHandle;
             switch (eb->fParam1)
             {
                 case 1:
-                    eb->fHandle = new char*;
-                    *eb->fHandle = new char[eb->fParam2];
-                    handles[eb->fHandle] = eb->fParam2;
+                    handle = new char*;
+                    *handle = new char[eb->fParam2];
+                    handles[handle] = eb->fParam2;
+                    eb->fHandle = handle;
                     break;
                 case 2:
-                    require(handles.erase(eb->fHandle) == 1, "invalid handle disposal");
-                    delete[] *eb->fHandle;
-                    delete eb->fHandle;
+                    require(handles.erase(handle) == 1, "invalid handle disposal");
+                    delete[] *handle;
+                    delete handle;
                     break;
                 case 5:
-                    require(handles.count(eb->fHandle) == 1, "invalid handle lock");
-                    eb->fParam3 = reinterpret_cast<sLONG_PTR>(*eb->fHandle);
+                    require(handles.count(handle) == 1, "invalid handle lock");
+                    eb->fParam3 = reinterpret_cast<sLONG_PTR>(*handle);
                     break;
                 case 6:
                     break;
@@ -92,6 +97,7 @@ static void host(short selector, EngineBlock* eb)
             }
             eb->fError = 0;
             break;
+        }
         case EX_CREATE_PICTURE:
             eb->fPicture = &pictureToken;
             eb->fError = 0;
@@ -114,10 +120,11 @@ static void host(short selector, EngineBlock* eb)
             CFIndex length = CFStringGetLength(value);
             require((length + 1) * sizeof(PA_Unichar) <=
                     static_cast<size_t>(eb->fParam3), "conversion buffer too small");
+            // Conversion returns bytes, not UTF-16 units or a required terminator.
+            std::memset(eb->fPtr2, 0x7f, static_cast<size_t>(eb->fParam3));
             CFStringGetCharacters(value, CFRangeMake(0, length),
                                   static_cast<UniChar*>(eb->fPtr2));
-            static_cast<UniChar*>(eb->fPtr2)[length] = 0;
-            eb->fParam3 = length;
+            eb->fParam3 = length * sizeof(PA_Unichar);
             CFRelease(value);
             eb->fError = 0;
             break;
@@ -130,7 +137,8 @@ static void host(short selector, EngineBlock* eb)
             require(eb->fParam1 == 678 || eb->fParam1 == 1002, "unexpected command");
             require(args[index]->fType == eVK_Unistring, "missing command string");
             PA_Unistring value = args[index]->uValue.fString;
-            require(strings.count(value.fString) == 1, "command reads freed string");
+            PA_Unichar* buffer = value.fString;
+            require(strings.count(buffer) == 1, "command reads freed string");
             require(CUTF16String(value.fString, value.fLength) == expected,
                     "command string content changed");
             if (eb->fParam1 == 678)
@@ -149,7 +157,7 @@ void PluginMain(PA_long32, PA_PluginParameters) {}
 
 int main(int argc, char** argv)
 {
-    require(argc == 2, "expected path or copy");
+    require(argc == 2, "expected path or copy format case");
     gCall4D = host;
     @autoreleasepool
     {
@@ -160,6 +168,24 @@ int main(int argc, char** argv)
         CUTF8String input;
         text.copyUTF8String(&input);
         CUTF8String original(input);
+        const char* format = NULL;
+        if (std::strcmp(argv[1], "copy-empty") == 0)
+        {
+            format = "";
+            expected.clear();
+        }
+        else if (std::strcmp(argv[1], "copy-bmp") == 0)
+        {
+            format = ".\xe6\x97\xa5";
+            const PA_Unichar bmp[] = {'.', 0x65e5, 0};
+            expected = CUTF16String(bmp);
+        }
+        else if (std::strcmp(argv[1], "copy-supplementary") == 0)
+        {
+            format = ".\xf0\x9f\x98\x80";
+            const PA_Unichar supplementary[] = {'.', 0xd83d, 0xde00, 0};
+            expected = CUTF16String(supplementary);
+        }
         for (int i = 0; i < 100; ++i)
         {
             if (std::strcmp(argv[1], "path") == 0)
@@ -170,10 +196,31 @@ int main(int argc, char** argv)
             }
             else
             {
-                require(std::strcmp(argv[1], "copy") == 0, "unknown test case");
-                const PA_Unichar png[] = {'.', 'p', 'n', 'g', 0};
-                expected = CUTF16String(png);
-                PA_Picture copy = picture.createCopyPNG();
+                PA_Picture copy;
+                if (format != NULL)
+                {
+                    CPicture converter;
+                    copy = converter.createCopy(format);
+                }
+                else if (std::strcmp(argv[1], "copy") == 0)
+                {
+                    const PA_Unichar png[] = {'.', 'p', 'n', 'g', 0};
+                    expected = CUTF16String(png);
+                    copy = picture.createCopyPNG();
+                }
+                else if (std::strcmp(argv[1], "copy-jpg") == 0)
+                {
+                    const PA_Unichar jpg[] = {'.', 'j', 'p', 'g', 0};
+                    expected = CUTF16String(jpg);
+                    copy = picture.createCopyJPG();
+                }
+                else
+                {
+                    require(std::strcmp(argv[1], "copy-tif") == 0, "unknown test case");
+                    const PA_Unichar tif[] = {'.', 't', 'i', 'f', 0};
+                    expected = CUTF16String(tif);
+                    copy = picture.createCopyTIF();
+                }
                 require(copy == &pictureToken, "picture result changed");
                 PA_DisposePicture(copy);
             }

@@ -353,7 +353,7 @@ The libraries are built from pinned sources by two scripts; their output is igno
 
 `.github/workflows/ci.yml` runs both scripts and builds the plugin, unsigned, on every push; `release.yml` does the same before signing. Both cache the libraries under the hash of the script, so changing a pinned version rebuilds them.
 
-### SDK string ownership regression
+### SDK string ownership and conversion regression
 
 The bundled SDK's `PA_SetStringVariable` transfers a string allocation into
 the variable without copying or clearing its previous value. The picture
@@ -364,14 +364,24 @@ wrapper double-dispose and overwritten empty-string allocations in file loading
 and picture copying. These wrappers are not used by the exposed SMTP command;
 no command or signature has been added.
 
+`PA_ConvertCharsetToCharset` returns the number of output bytes, not UTF-16
+code units. The dormant picture-copy helper divides that byte count by
+`sizeof(PA_Unichar)` before constructing its explicit-length format string,
+excluding any terminator. Passing the byte count directly as a unit count
+overreads the conversion buffer for `.png`, `.jpg`, and `.tif`.
+
 On macOS, run
 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_string_ownership.py -v`.
 This compiles the real picture wrappers and bundled SDK against a host shim,
-checks argument reads during synchronous commands and repeated cleanup, and
+with AddressSanitizer and UndefinedBehaviorSanitizer enabled. It checks argument
+reads during synchronous commands, repeated cleanup, and exact UTF-16 formats
+for PNG/JPG/TIF, empty, BMP, and supplementary-character inputs. The shim returns
+the SDK's documented byte count and leaves a nonzero unused buffer tail to
+verify that conversion uses the explicit length rather than termination. It
 requires no libetpan/OpenSSL build, signing, or network access. CI runs it before
-the macOS dependency build. The shim verifies string ownership, not actual image
-conversion or 4D host behavior; Windows and real 4D runtime validation remain
-separate.
+the macOS dependency build. The shim verifies string ownership and conversion
+length handling, not actual image conversion or 4D host behavior; Windows and
+real 4D runtime validation remain separate.
 
 ### Independent Bump and Build
 
