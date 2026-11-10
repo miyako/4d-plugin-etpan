@@ -377,7 +377,9 @@ with AddressSanitizer and UndefinedBehaviorSanitizer enabled. It checks argument
 reads during synchronous commands, repeated cleanup, and exact UTF-16 formats
 for PNG/JPG/TIF, empty, BMP, and supplementary-character inputs. The shim returns
 the SDK's documented byte count and leaves a nonzero unused buffer tail to
-verify that conversion uses the explicit length rather than termination. It
+verify that conversion uses the explicit length rather than termination. The
+original ownership-only shim incorrectly returned UTF-16 units instead of bytes,
+masking this overread; the corrected shim models the bundled SDK contract. It
 requires no libetpan/OpenSSL build, signing, or network access. CI runs it before
 the macOS dependency build. The shim verifies string ownership and conversion
 length handling, not actual image conversion or 4D host behavior; Windows and
